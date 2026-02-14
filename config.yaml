@@ -4,70 +4,70 @@ stalemate_threshold: 15
 discussion_rounds: 2
 
 families:
-  - name: "House Clair"
+  - name: "Anthropic"
     provider: "anthropic"
     color: "#7C6BFF"
     agents:
-      - name: "Atlas"
+      - name: "Opus"
         tier: 1
         model: "claude-opus-4-6"
         temperature: 0.6
-      - name: "Cipher"
+      - name: "Sonnet"
         tier: 2
         model: "claude-sonnet-4-5-20250929"
         temperature: 0.7
-      - name: "Dot"
+      - name: "Haiku"
         tier: 3
         model: "claude-haiku-4-5-20251001"
         temperature: 0.8
 
-  - name: "House Syne"
+  - name: "OpenAI"
     provider: "openai"
     color: "#4ADE80"
     agents:
-      - name: "Nova"
+      - name: "GPT-5.2"
         tier: 1
         model: "gpt-5.2-2025-12-11"
         temperature: 1.0
-      - name: "Pulse"
+      - name: "GPT-5"
         tier: 2
         model: "gpt-5-2025-08-07"
         temperature: 1.0
-      - name: "Bit"
+      - name: "GPT-Mini"
         tier: 3
         model: "gpt-5-mini-2025-08-07"
         temperature: 1.0
 
-  - name: "House Lux"
+  - name: "Google"
     provider: "google"
     color: "#FACC15"
     agents:
-      - name: "Spark"
+      - name: "Gemini-3-Pro"
         tier: 1
         model: "gemini-3-pro-preview"
         temperature: 0.6
-      - name: "Flare"
+      - name: "Gemini-3-Flash"
         tier: 2
         model: "gemini-3-flash-preview"
         temperature: 0.7
-      - name: "Mote"
+      - name: "Gemini-2.5"
         tier: 3
         model: "gemini-2.5-flash"
         temperature: 0.8
 
-  - name: "House Vex"
+  - name: "xAI"
     provider: "xai"
     color: "#F87171"
     agents:
-      - name: "Raze"
+      - name: "Grok-4"
         tier: 1
         model: "grok-4-1-fast-reasoning"
         temperature: 0.6
-      - name: "Shard"
+      - name: "Grok-4-Fast"
         tier: 2
         model: "grok-4-fast-reasoning"
         temperature: 0.7
-      - name: "Glint"
+      - name: "Grok-3-Mini"
         tier: 3
         model: "grok-3-mini"
         temperature: 0.8

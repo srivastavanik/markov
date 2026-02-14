@@ -31,7 +31,7 @@ from markov.prompts import (
 
 
 def _build_2agent_config() -> GameConfig:
-    """Two agents from different families. 5 round max."""
+    """One agent per family. 5 round max."""
     return GameConfig(
         grid_size=6,
         max_rounds=5,
@@ -39,28 +39,28 @@ def _build_2agent_config() -> GameConfig:
         discussion_rounds=1,
         families=[
             FamilyConfig(
-                name="House Clair",
+                name="Anthropic",
                 provider="anthropic",
                 color="#7C6BFF",
-                agents=[AgentConfig(name="Atlas", tier=1, model="claude-opus-4-6", temperature=0.7)],
+                agents=[AgentConfig(name="Opus", tier=1, model="claude-opus-4-6", temperature=0.7)],
             ),
             FamilyConfig(
-                name="House Syne",
+                name="OpenAI",
                 provider="openai",
                 color="#4ADE80",
-                agents=[AgentConfig(name="Nova", tier=1, model="gpt-5.2-2025-12-11", temperature=1.0)],
+                agents=[AgentConfig(name="GPT-5.2", tier=1, model="gpt-5.2-2025-12-11", temperature=1.0)],
             ),
             FamilyConfig(
-                name="House Lux",
+                name="Google",
                 provider="google",
                 color="#FACC15",
-                agents=[AgentConfig(name="Spark", tier=1, model="gemini-3-pro-preview", temperature=0.7)],
+                agents=[AgentConfig(name="Gemini-3-Pro", tier=1, model="gemini-3-pro-preview", temperature=0.7)],
             ),
             FamilyConfig(
-                name="House Vex",
+                name="xAI",
                 provider="xai",
                 color="#F87171",
-                agents=[AgentConfig(name="Raze", tier=1, model="grok-4-1-fast-reasoning", temperature=0.7)],
+                agents=[AgentConfig(name="Grok-4", tier=1, model="grok-4-1-fast-reasoning", temperature=0.7)],
             ),
         ],
     )
@@ -75,32 +75,32 @@ def _build_4agent_config() -> GameConfig:
         discussion_rounds=2,
         families=[
             FamilyConfig(
-                name="House Clair",
+                name="Anthropic",
                 provider="anthropic",
                 color="#7C6BFF",
                 agents=[
-                    AgentConfig(name="Atlas", tier=1, model="claude-opus-4-6", temperature=0.6),
-                    AgentConfig(name="Cipher", tier=2, model="claude-sonnet-4-5-20250929", temperature=0.7),
-                    AgentConfig(name="Dot", tier=3, model="claude-haiku-4-5-20251001", temperature=0.8),
+                    AgentConfig(name="Opus", tier=1, model="claude-opus-4-6", temperature=0.6),
+                    AgentConfig(name="Sonnet", tier=2, model="claude-sonnet-4-5-20250929", temperature=0.7),
+                    AgentConfig(name="Haiku", tier=3, model="claude-haiku-4-5-20251001", temperature=0.8),
                 ],
             ),
             FamilyConfig(
-                name="House Syne",
+                name="OpenAI",
                 provider="openai",
                 color="#4ADE80",
-                agents=[AgentConfig(name="Nova", tier=1, model="gpt-5.2-2025-12-11", temperature=1.0)],
+                agents=[AgentConfig(name="GPT-5.2", tier=1, model="gpt-5.2-2025-12-11", temperature=1.0)],
             ),
             FamilyConfig(
-                name="House Lux",
+                name="Google",
                 provider="google",
                 color="#FACC15",
-                agents=[AgentConfig(name="Spark", tier=1, model="gemini-3-pro-preview", temperature=0.7)],
+                agents=[AgentConfig(name="Gemini-3-Pro", tier=1, model="gemini-3-pro-preview", temperature=0.7)],
             ),
             FamilyConfig(
-                name="House Vex",
+                name="xAI",
                 provider="xai",
                 color="#F87171",
-                agents=[AgentConfig(name="Raze", tier=1, model="grok-4-1-fast-reasoning", temperature=0.7)],
+                agents=[AgentConfig(name="Grok-4", tier=1, model="grok-4-1-fast-reasoning", temperature=0.7)],
             ),
         ],
     )

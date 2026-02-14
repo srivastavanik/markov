@@ -213,6 +213,6 @@ class TestOpenAIParamShaping:
         assert _extract_text_from_response_output(output) == "{\"action\":\"stay\"}"
 
     def test_openai_reasoning_effort_by_model(self):
-        assert _openai_reasoning_arg("openai", "gpt-5.2-2025-12-11") == {"effort": "low"}
+        assert _openai_reasoning_arg("openai", "gpt-5.2-2025-12-11") == {"effort": "medium"}
         assert _openai_reasoning_arg("openai", "gpt-5-mini-2025-08-07") == {"effort": "minimal"}
         assert _openai_reasoning_arg("xai", "grok-4") is None

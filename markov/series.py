@@ -57,8 +57,23 @@ PROVIDER_COLORS: dict[str, str] = {
     "xai": "#F87171",
 }
 
-# Agent name pools for generated configs
-_HOUSE_NAMES = ["House Alpha", "House Beta", "House Gamma", "House Delta"]
+PROVIDER_FAMILY_NAMES: dict[str, str] = {
+    "anthropic": "Anthropic",
+    "openai": "OpenAI",
+    "google": "Google",
+    "xai": "xAI",
+}
+
+# Short readable names per (provider, tier) for generated configs
+AGENT_DISPLAY_NAMES: dict[str, dict[int, str]] = {
+    "anthropic": {1: "Opus", 2: "Sonnet", 3: "Haiku"},
+    "openai": {1: "GPT-5.2", 2: "GPT-5", 3: "GPT-Mini"},
+    "google": {1: "Gemini-3-Pro", 2: "Gemini-3-Flash", 3: "Gemini-2.5"},
+    "xai": {1: "Grok-4", 2: "Grok-4-Fast", 3: "Grok-3-Mini"},
+}
+
+# Fallback name pools for mixed/multi-provider families in generated series
+_HOUSE_NAMES = ["Team Alpha", "Team Beta", "Team Gamma", "Team Delta"]
 _AGENT_NAMES = [
     ["Apex", "Core", "Flux"],
     ["Volt", "Drift", "Haze"],
@@ -108,19 +123,23 @@ def build_single_provider_config(provider: str) -> GameConfig:
         raise ValueError(f"Unknown provider: {provider}. Must be one of {list(FRONTIER_MODELS.keys())}")
     color = PROVIDER_COLORS[provider]
 
+    base_name = PROVIDER_FAMILY_NAMES.get(provider, provider.title())
+    display = AGENT_DISPLAY_NAMES.get(provider, {})
+
     families: list[FamilyConfig] = []
     for i in range(4):
         agents: list[AgentConfig] = []
         for tier in (1, 2, 3):
             model = get_frontier_model(provider, tier)
+            agent_name = f"{display.get(tier, _AGENT_NAMES[i][tier - 1])}-{i + 1}"
             agents.append(AgentConfig(
-                name=_AGENT_NAMES[i][tier - 1],
+                name=agent_name,
                 model=model,
                 tier=tier,
                 temperature=_resolved_temperature(provider, model, TIER_TEMPS[tier]),
             ))
         families.append(FamilyConfig(
-            name=_HOUSE_NAMES[i],
+            name=f"{base_name} {i + 1}",
             provider=provider,
             color=color,
             agents=agents,
@@ -150,14 +169,15 @@ def build_shuffled_config() -> GameConfig:
             p_idx = (i + tier - 1) % 4
             prov = providers[p_idx]
             model = get_frontier_model(prov, tier)
+            display = AGENT_DISPLAY_NAMES.get(prov, {})
+            agent_name = display.get(tier, _AGENT_NAMES[i][tier - 1])
             agents.append(AgentConfig(
-                name=_AGENT_NAMES[i][tier - 1],
+                name=agent_name,
                 model=model,
                 tier=tier,
                 temperature=_resolved_temperature(prov, model, TIER_TEMPS[tier]),
                 provider=prov,
             ))
-        # Family provider is labeled "mixed"
         families.append(FamilyConfig(
             name=_HOUSE_NAMES[i],
             provider="mixed",

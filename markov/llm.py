@@ -179,7 +179,7 @@ def _openai_reasoning_arg(provider: str, model: str) -> dict[str, str] | None:
     if provider == "openai" and _is_openai_gpt5_family(model):
         normalized = model.strip().lower().split("/", 1)[-1]
         if normalized.startswith("gpt-5.2"):
-            return {"effort": "low"}
+            return {"effort": "medium"}
         return {"effort": "minimal"}
     return None
 
@@ -253,11 +253,17 @@ async def _call_openai(
     c = client or _get_openai()
     provider_name = "xai" if client is not None else "openai"
     resolved_model = _normalize_model_for_provider(provider_name, model)
+    # GPT-5 reasoning models consume part of max_output_tokens on internal
+    # reasoning before emitting visible text. Add headroom so the actual
+    # JSON response isn't truncated.
+    effective_max = max_tokens
+    if _is_openai_gpt5_family(resolved_model):
+        effective_max = max_tokens + 2048
     request_kwargs: dict[str, object] = {
         "model": resolved_model,
         "instructions": system_prompt,
         "input": user_prompt,
-        "max_output_tokens": max_tokens,
+        "max_output_tokens": effective_max,
         "timeout": timeout,
     }
     resolved_temp = _openai_temperature_arg(resolved_model, temperature)
