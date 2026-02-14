@@ -133,6 +133,7 @@ async def call_llm(
             completion_tok = usage.completion_tokens if usage else 0
 
             _costs.record(model, prompt_tok, completion_tok, latency)
+            logger.info("LLM OK: model=%s tokens=%d+%d latency=%dms", model, prompt_tok, completion_tok, latency)
 
             return LLMResponse(
                 text=text,

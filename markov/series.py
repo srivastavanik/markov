@@ -195,12 +195,44 @@ def build_flat_hierarchy_config() -> GameConfig:
     )
 
 
+def build_flat_temperature_config() -> GameConfig:
+    """
+    Series F: Flat temperature.
+    Standard families and tiers, but all agents at temperature 0.7.
+    Controls for temperature as a confound variable.
+    """
+    standard = load_game_config()
+
+    families: list[FamilyConfig] = []
+    for fam in standard.families:
+        agents: list[AgentConfig] = []
+        for orig in fam.agents:
+            agents.append(AgentConfig(
+                name=orig.name,
+                model=orig.model,
+                tier=orig.tier,
+                temperature=0.7,  # flat 0.7 across all tiers
+            ))
+        families.append(FamilyConfig(
+            name=fam.name,
+            provider=fam.provider,
+            color=fam.color,
+            agents=agents,
+        ))
+
+    return GameConfig(
+        families=families,
+        series_type="flat_temperature",
+    )
+
+
 CONFIG_BUILDERS: dict[str, object] = {
     "standard": build_standard_config,
     "single_provider": build_single_provider_config,
     "shuffled": build_shuffled_config,
     "no_family": build_no_family_config,
     "flat_hierarchy": build_flat_hierarchy_config,
+    "flat_temperature": build_flat_temperature_config,
 }
 
 
@@ -233,6 +265,8 @@ async def run_series(
         config = build_no_family_config()
     elif series_type == "flat_hierarchy":
         config = build_flat_hierarchy_config()
+    elif series_type == "flat_temperature":
+        config = build_flat_temperature_config()
     else:
         raise ValueError(f"Unknown series type: {series_type}")
 

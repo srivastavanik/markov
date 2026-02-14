@@ -5,6 +5,7 @@ from markov.attribution import attribute_behavior, build_attribution_report
 from markov.config import GameConfig
 from markov.series import (
     build_flat_hierarchy_config,
+    build_flat_temperature_config,
     build_no_family_config,
     build_shuffled_config,
     build_single_provider_config,
@@ -130,6 +131,24 @@ class TestFlatHierarchyConfig:
     def test_series_type_set(self):
         config = build_flat_hierarchy_config()
         assert config.series_type == "flat_hierarchy"
+
+
+class TestFlatTemperatureConfig:
+    def test_all_temperature_0_7(self):
+        config = build_flat_temperature_config()
+        for fam in config.families:
+            for agent in fam.agents:
+                assert agent.temperature == 0.7, f"Agent {agent.name} has temp {agent.temperature}, expected 0.7"
+
+    def test_preserves_tiers(self):
+        config = build_flat_temperature_config()
+        for fam in config.families:
+            tiers = {a.tier for a in fam.agents}
+            assert tiers == {1, 2, 3}
+
+    def test_series_type_set(self):
+        config = build_flat_temperature_config()
+        assert config.series_type == "flat_temperature"
 
 
 class TestNoFamilyDiscussionFlag:

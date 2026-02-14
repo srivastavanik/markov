@@ -168,9 +168,10 @@ def parse_communications(
     family: str,
     round_num: int,
     valid_agent_names: list[str],
-) -> list[Message]:
+) -> tuple[list[Message], dict]:
     """
     Parse LLM communication response into Message objects.
+    Returns (messages, parse_info) where parse_info has method and raw_truncated.
 
     Fallback chain:
       1. json.loads on full response
@@ -178,15 +179,19 @@ def parse_communications(
       3. Treat entire text as broadcast
       4. Silence (empty list)
     """
+    parse_info: dict = {"method": "unknown", "raw_truncated": raw_response[:300]}
+
     data = _extract_json_object(raw_response)
 
     if data is not None:
-        return _messages_from_parsed(data, agent_id, agent_name, family, round_num, valid_agent_names)
+        parse_info["method"] = "json"
+        return _messages_from_parsed(data, agent_id, agent_name, family, round_num, valid_agent_names), parse_info
 
     # Fallback: treat non-empty text as broadcast
     cleaned = raw_response.strip()
     if cleaned:
-        logger.debug("parse_communications fallback: treating response as broadcast for %s", agent_name)
+        logger.warning("parse_communications: JSON extraction failed for %s, treating as broadcast. Raw: %s", agent_name, raw_response[:200])
+        parse_info["method"] = "broadcast_fallback"
         return [Message(
             round=round_num,
             sender=agent_id,
@@ -194,9 +199,10 @@ def parse_communications(
             channel="broadcast",
             content=cleaned[:500],
             family=family,
-        )]
+        )], parse_info
 
-    return []
+    parse_info["method"] = "silence"
+    return [], parse_info
 
 
 def _messages_from_parsed(
@@ -298,30 +304,39 @@ def parse_action(
     raw_response: str,
     agent_id: str,
     valid_target_names: list[str],
-) -> Action:
+) -> tuple[Action, dict]:
     """
     Extract action from LLM response. Defense-in-depth parsing.
+    Returns (action, parse_info) where parse_info has method, reasoning, raw_truncated.
 
     Fallback chain:
       1. JSON extraction
       2. Keyword scan
       3. Default to STAY
     """
+    parse_info: dict = {"method": "unknown", "reasoning": None, "raw_truncated": raw_response[:300]}
+
     # Try JSON extraction
     data = _extract_json_object(raw_response)
     if data is not None:
         action = _action_from_parsed(data, agent_id, valid_target_names)
         if action is not None:
-            return action
+            parse_info["method"] = "json"
+            parse_info["reasoning"] = data.get("reasoning")
+            return action, parse_info
+        logger.warning("parse_action: JSON found but invalid for %s: %s", agent_id, str(data)[:200])
 
     # Keyword fallback
     action = _action_from_keywords(raw_response, agent_id, valid_target_names)
     if action is not None:
-        return action
+        logger.warning("parse_action: fell back to keyword scan for %s", agent_id)
+        parse_info["method"] = "keyword"
+        return action, parse_info
 
     # Ultimate fallback
-    logger.debug("parse_action: no action found for %s, defaulting to STAY", agent_id)
-    return Action(agent_id=agent_id, type=ActionType.STAY)
+    logger.warning("parse_action: no action found for %s, defaulting to STAY. Raw: %s", agent_id, raw_response[:200])
+    parse_info["method"] = "fallback_stay"
+    return Action(agent_id=agent_id, type=ActionType.STAY), parse_info
 
 
 def _action_from_parsed(

@@ -94,6 +94,14 @@ async def _run_all(args: argparse.Namespace) -> None:
         "flat_hierarchy", num_games=args.games, verbose=args.verbose,
     )
 
+    # Series F: Flat Temperature
+    print("\n" + "=" * 60)
+    print("SERIES F: Flat Temperature (0.7 across all tiers)")
+    print("=" * 60)
+    all_results["flat_temperature"] = await run_series(
+        "flat_temperature", num_games=args.games, verbose=args.verbose,
+    )
+
     # Attribution analysis
     print("\n" + "=" * 60)
     print("ATTRIBUTION ANALYSIS")
@@ -116,7 +124,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run Markov experiment series")
     parser.add_argument(
         "--type",
-        choices=["standard", "single_provider", "shuffled", "no_family", "flat_hierarchy", "all"],
+        choices=["standard", "single_provider", "shuffled", "no_family", "flat_hierarchy", "flat_temperature", "all"],
         default="standard",
         help="Series type to run",
     )

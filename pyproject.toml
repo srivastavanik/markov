@@ -10,6 +10,7 @@ dependencies = [
     "pyyaml",
     "websockets",
     "vaderSentiment",
+    "supabase",
 ]
 
 [project.optional-dependencies]

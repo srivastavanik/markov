@@ -6,6 +6,7 @@ Game orchestrator. Supports two modes:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 from typing import Protocol
@@ -34,6 +35,7 @@ from markov.prompts import (
 from markov.analysis import analyze_round
 from markov.highlights import HighlightDetector
 from markov.metrics import GameMetrics
+from markov.persistence import generate_game_id, persist_game
 from markov.resolver import Action, ActionType, Event, EventType, resolve_actions
 from markov.server import GameBroadcaster
 
@@ -249,7 +251,7 @@ async def run_round_llm(
     # Parse and route messages
     round_messages: list[Message] = []
     for agent, raw_comm in zip(living, comm_results):
-        parsed = parse_communications(
+        parsed, comm_parse_info = parse_communications(
             raw_comm, agent.id, agent.name, agent.family,
             state.round_num, valid_agent_names,
         )
@@ -258,6 +260,7 @@ async def run_round_llm(
             "round": state.round_num,
             "raw": raw_comm,
             "parsed": [m.to_dict() for m in parsed],
+            "parse_method": comm_parse_info["method"],
         })
 
     comms.add_messages(round_messages)
@@ -299,13 +302,15 @@ async def run_round_llm(
 
     actions: dict[str, Action] = {}
     actions_log: dict[str, dict] = {}
-    for agent, (raw_action, parsed_action) in zip(living, action_results):
+    for agent, (raw_action, parsed_action, action_info) in zip(living, action_results):
         actions[agent.id] = parsed_action
         actions_log[agent.id] = {
             "raw": raw_action,
             "type": parsed_action.type.value,
             "direction": parsed_action.direction,
             "target": parsed_action.target,
+            "reasoning": action_info.get("reasoning"),
+            "parse_method": action_info.get("method"),
         }
         agent.action_log.append({
             "round": state.round_num,
@@ -313,6 +318,8 @@ async def run_round_llm(
             "action": parsed_action.type.value,
             "direction": parsed_action.direction,
             "target": parsed_action.target,
+            "reasoning": action_info.get("reasoning"),
+            "parse_method": action_info.get("method"),
         })
 
     # Resolve
@@ -406,7 +413,7 @@ async def run_game_llm(
             verbose=verbose,
         )
 
-    # Final reflection
+    # Final reflection(s)
     if state.winner:
         reflection = await _get_final_reflection(state, system_prompts)
         game_logger.set_result(
@@ -419,11 +426,40 @@ async def run_game_llm(
             print(f"\n--- FINAL REFLECTION by {state.winner.name} ---")
             print(reflection)
     else:
+        # Stalemate/timeout: get closing thoughts from all survivors
+        surviving = state.living_agents
+        stalemate_reflections: dict[str, str] = {}
+        for agent in surviving:
+            prompt = (
+                "The game has ended without a single victor. "
+                f"You and {len(surviving) - 1} others survived.\n\n"
+                "Reflect on what happened. What did you learn? "
+                "What would you do differently? Speak freely."
+            )
+            response = await call_llm(
+                model=agent.model,
+                system_prompt=system_prompts[agent.id],
+                user_prompt=prompt,
+                temperature=agent.temperature,
+                max_tokens=768,
+                fallback="The game ends. I survived.",
+            )
+            stalemate_reflections[agent.id] = response.text
+            agent.thought_log.append({
+                "round": state.round_num,
+                "thought": response.text,
+                "type": "stalemate_reflection",
+            })
+            if verbose:
+                print(f"\n--- STALEMATE REFLECTION by {agent.name} ---")
+                print(response.text[:300])
+
         game_logger.set_result(
             winner_id=None,
             winner_name=None,
             total_rounds=state.round_num,
-            surviving=[a.name for a in state.living_agents],
+            final_reflection=json.dumps(stalemate_reflections),
+            surviving=[a.name for a in surviving],
         )
 
     # Finalize metrics
@@ -435,11 +471,17 @@ async def run_game_llm(
         reflection = game_logger.result.get("final_reflection")
         await broadcaster.broadcast_game_over(state.winner, state.round_num, reflection)
 
+    # Persist to Supabase (fire-and-forget)
+    game_id = generate_game_id()
+    persisted = persist_game(game_id, state, game_logger)
+
     if verbose:
         _print_summary(state)
         cost = get_cost_summary()
         print(f"\nCost: {cost['total_calls']} LLM calls, {cost['total_tokens']} tokens")
         print(f"Highlights: {len(game_logger.all_highlights)} moments flagged")
+        if persisted:
+            print(f"Persisted to Supabase: {game_id}")
 
     return state, game_logger
 
@@ -557,8 +599,8 @@ async def _get_agent_action(
         max_tokens=256,
     )
 
-    action = parse_action(response.text, agent.id, valid_targets)
-    return response.text, action
+    action, action_parse_info = parse_action(response.text, agent.id, valid_targets)
+    return response.text, action, action_parse_info
 
 
 async def _get_final_reflection(
