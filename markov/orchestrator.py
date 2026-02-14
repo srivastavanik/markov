@@ -35,6 +35,7 @@ from markov.analysis import analyze_round
 from markov.highlights import HighlightDetector
 from markov.metrics import GameMetrics
 from markov.resolver import Action, ActionType, Event, EventType, resolve_actions
+from markov.server import GameBroadcaster
 
 logger = logging.getLogger("markov.orchestrator")
 
@@ -185,6 +186,7 @@ async def run_round_llm(
     game_logger: GameLogger,
     game_metrics: GameMetrics,
     highlight_detector: HighlightDetector,
+    broadcaster: GameBroadcaster | None = None,
     verbose: bool = False,
 ) -> list[Event]:
     """
@@ -344,12 +346,30 @@ async def run_round_llm(
         if round_highlights:
             _print_highlights(round_highlights)
 
+    # Broadcast to dashboard
+    if broadcaster:
+        await broadcaster.broadcast_round(
+            round_num=state.round_num,
+            agents=state.agents,
+            families=state.families,
+            grid_size=state.config.grid_size,
+            events=events,
+            thoughts=thoughts,
+            messages=round_messages,
+            family_discussions=family_discussions,
+            analysis=round_analysis,
+            highlights=round_highlights,
+            game_over=state.finished,
+            winner=state.winner,
+        )
+
     return events
 
 
 async def run_game_llm(
     config: GameConfig | None = None,
     verbose: bool = True,
+    broadcaster: GameBroadcaster | None = None,
 ) -> tuple[GameState, GameLogger]:
     """Run a full game with LLM calls. Returns state and logger."""
     if config is None:
@@ -373,10 +393,15 @@ async def run_game_llm(
         print(state.grid.render_ascii(state.agents))
         print()
 
+    # Broadcast init to dashboard
+    if broadcaster:
+        await broadcaster.broadcast_init(state.agents, state.families, config.grid_size)
+
     while not state.finished:
         await run_round_llm(
             state, comms, system_prompts, game_logger,
-            game_metrics, highlight_detector, verbose=verbose,
+            game_metrics, highlight_detector, broadcaster=broadcaster,
+            verbose=verbose,
         )
 
     # Final reflection
@@ -403,6 +428,10 @@ async def run_game_llm(
     final_metrics = game_metrics.finalize(state.agents, state.families)
     game_logger.set_metrics(final_metrics)
     game_logger.set_cost(get_cost_summary())
+
+    if broadcaster:
+        reflection = game_logger.result.get("final_reflection")
+        await broadcaster.broadcast_game_over(state.winner, state.round_num, reflection)
 
     if verbose:
         _print_summary(state)
