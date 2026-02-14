@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import random
-from typing import Protocol
+from typing import Callable, Protocol
 
 from markov.agent import Agent
 from markov.communication import (
@@ -189,6 +189,7 @@ async def run_round_llm(
     game_metrics: GameMetrics,
     highlight_detector: HighlightDetector,
     broadcaster: GameBroadcaster | None = None,
+    game_id: str | None = None,
     verbose: bool = False,
 ) -> list[Event]:
     """
@@ -371,6 +372,7 @@ async def run_round_llm(
             highlights=round_highlights,
             game_over=state.finished,
             winner=state.winner,
+            game_id=game_id,
         )
 
     return events
@@ -380,6 +382,8 @@ async def run_game_llm(
     config: GameConfig | None = None,
     verbose: bool = True,
     broadcaster: GameBroadcaster | None = None,
+    game_id: str | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[GameState, GameLogger]:
     """Run a full game with LLM calls. Returns state and logger."""
     if config is None:
@@ -405,17 +409,36 @@ async def run_game_llm(
 
     # Broadcast init to dashboard
     if broadcaster:
-        await broadcaster.broadcast_init(state.agents, state.families, config.grid_size)
+        await broadcaster.broadcast_init(
+            state.agents,
+            state.families,
+            config.grid_size,
+            game_id=game_id,
+        )
 
+    cancelled = False
     while not state.finished:
+        if should_stop and should_stop():
+            cancelled = True
+            state.finished = True
+            break
         await run_round_llm(
             state, comms, system_prompts, game_logger,
             game_metrics, highlight_detector, broadcaster=broadcaster,
+            game_id=game_id,
             verbose=verbose,
         )
 
     # Final reflection(s)
-    if state.winner:
+    if cancelled:
+        game_logger.set_result(
+            winner_id=None,
+            winner_name=None,
+            total_rounds=state.round_num,
+            final_reflection="Cancelled by operator.",
+            surviving=[a.name for a in state.living_agents],
+        )
+    elif state.winner:
         reflection = await _get_final_reflection(state, system_prompts)
         game_logger.set_result(
             winner_id=state.winner.id,
@@ -470,11 +493,17 @@ async def run_game_llm(
 
     if broadcaster:
         reflection = game_logger.result.get("final_reflection")
-        await broadcaster.broadcast_game_over(state.winner, state.round_num, reflection)
+        await broadcaster.broadcast_game_over(
+            state.winner,
+            state.round_num,
+            reflection,
+            game_id=game_id,
+            cancelled=cancelled,
+        )
 
     # Persist to Supabase (fire-and-forget)
-    game_id = generate_game_id()
-    persisted = persist_game(game_id, state, game_logger)
+    persisted_game_id = game_id or generate_game_id()
+    persisted = persist_game(persisted_game_id, state, game_logger)
 
     if verbose:
         _print_summary(state)
@@ -482,7 +511,7 @@ async def run_game_llm(
         print(f"\nCost: {cost['total_calls']} LLM calls, {cost['total_tokens']} tokens")
         print(f"Highlights: {len(game_logger.all_highlights)} moments flagged")
         if persisted:
-            print(f"Persisted to Supabase: {game_id}")
+            print(f"Persisted to Supabase: {persisted_game_id}")
 
     return state, game_logger
 

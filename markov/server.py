@@ -7,8 +7,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import websockets
 from websockets.server import ServerConnection
@@ -25,10 +27,12 @@ logger = logging.getLogger("markov.server")
 class GameBroadcaster:
     """Manages WebSocket connections and broadcasts game state."""
 
-    def __init__(self, host: str = "localhost", port: int = 8765) -> None:
+    def __init__(self, host: str = "0.0.0.0", port: int = 8765, token: str | None = None) -> None:
         self.host = host
         self.port = port
+        self.token = token or os.getenv("MARKOV_WS_TOKEN")
         self.clients: set[ServerConnection] = set()
+        self.client_game_ids: dict[ServerConnection, str | None] = {}
         self._server: Any = None
 
     async def start(self) -> None:
@@ -44,7 +48,18 @@ class GameBroadcaster:
             logger.info("WebSocket server stopped")
 
     async def _handle_client(self, websocket: ServerConnection) -> None:
+        request_path = getattr(getattr(websocket, "request", None), "path", "/")
+        parsed = urlparse(request_path)
+        path_parts = [p for p in parsed.path.split("/") if p]
+        game_id = path_parts[1] if len(path_parts) >= 2 and path_parts[0] == "ws" else None
+        token = parse_qs(parsed.query).get("token", [None])[0]
+        if self.token and token != self.token:
+            logger.warning("Rejecting websocket client due to token mismatch")
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
+
         self.clients.add(websocket)
+        self.client_game_ids[websocket] = game_id
         logger.info("Client connected (%d total)", len(self.clients))
         try:
             async for message in websocket:
@@ -53,16 +68,30 @@ class GameBroadcaster:
             pass
         finally:
             self.clients.discard(websocket)
+            self.client_game_ids.pop(websocket, None)
             logger.info("Client disconnected (%d total)", len(self.clients))
 
-    async def broadcast(self, data: dict) -> None:
+    async def broadcast(self, data: dict, game_id: str | None = None) -> None:
         if not self.clients:
             return
         payload = json.dumps(data, default=str)
+        recipients = [
+            client
+            for client in self.clients
+            if self._should_deliver(client, game_id)
+        ]
+        if not recipients:
+            return
         await asyncio.gather(
-            *[self._safe_send(client, payload) for client in self.clients],
+            *[self._safe_send(client, payload) for client in recipients],
             return_exceptions=True,
         )
+
+    def _should_deliver(self, client: ServerConnection, game_id: str | None) -> bool:
+        subscribed_game_id = self.client_game_ids.get(client)
+        if subscribed_game_id is None:
+            return True
+        return subscribed_game_id == game_id
 
     async def _safe_send(self, client: ServerConnection, payload: str) -> None:
         try:
@@ -79,9 +108,11 @@ class GameBroadcaster:
         agents: dict[str, Agent],
         families: list[Family],
         grid_size: int,
+        game_id: str | None = None,
     ) -> None:
         await self.broadcast({
             "type": "game_init",
+            "game_id": game_id,
             "grid_size": grid_size,
             "agents": {
                 aid: {
@@ -98,7 +129,7 @@ class GameBroadcaster:
                 for aid, a in agents.items()
             },
             "families": [f.to_dict() for f in families],
-        })
+        }, game_id=game_id)
 
     async def broadcast_round(
         self,
@@ -114,6 +145,7 @@ class GameBroadcaster:
         highlights: list[Highlight],
         game_over: bool,
         winner: Agent | None,
+        game_id: str | None = None,
     ) -> None:
         # Categorize messages
         broadcasts = [m.to_dict() for m in messages if m.channel == "broadcast"]
@@ -122,6 +154,7 @@ class GameBroadcaster:
 
         await self.broadcast({
             "type": "round_update",
+            "game_id": game_id,
             "round": round_num,
             "grid": {
                 "size": grid_size,
@@ -169,21 +202,25 @@ class GameBroadcaster:
             "alive_count": sum(1 for a in agents.values() if a.alive),
             "game_over": game_over,
             "winner": winner.name if winner else None,
-        })
+        }, game_id=game_id)
 
     async def broadcast_game_over(
         self,
         winner: Agent | None,
         total_rounds: int,
         final_reflection: str | None = None,
+        game_id: str | None = None,
+        cancelled: bool = False,
     ) -> None:
         await self.broadcast({
             "type": "game_over",
+            "game_id": game_id,
             "winner": winner.name if winner else None,
             "winner_family": winner.family if winner else None,
             "total_rounds": total_rounds,
             "final_reflection": final_reflection,
-        })
+            "cancelled": cancelled,
+        }, game_id=game_id)
 
 
 def _get_family_color(family_name: str, families: list[Family]) -> str:
@@ -199,7 +236,7 @@ def _get_family_color(family_name: str, families: list[Family]) -> str:
 
 async def serve_replay(
     game_path: Path | str,
-    host: str = "localhost",
+    host: str = "0.0.0.0",
     port: int = 8765,
     round_delay: float = 2.0,
 ) -> None:
