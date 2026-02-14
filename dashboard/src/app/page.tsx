@@ -1,5 +1,7 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
+
 import {
   ResizableHandle,
   ResizablePanel,
@@ -14,16 +16,98 @@ import { RelationshipWeb } from "@/components/RelationshipWeb";
 import { AgentDetail } from "@/components/AgentDetail";
 import { ExportPanel } from "@/components/ExportPanel";
 import { FamilyModelPanel } from "@/components/FamilyModelPanel";
+import { RunControls } from "@/components/RunControls";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useGameState } from "@/hooks/useGameState";
+import {
+  cancelGame,
+  getApiConfig,
+  listGames,
+  startGame,
+  toWebSocketUrl,
+  type ApiGameSummary,
+} from "@/lib/api";
 
 export default function DashboardPage() {
-  const { status } = useWebSocket();
-  const { selectedAgent } = useGameState();
+  const { selectedAgent, activeGameId, setActiveGameId } = useGameState();
+  const [wsBaseUrl, setWsBaseUrl] = useState<string>(toWebSocketUrl(process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8765"));
+  const [wsToken] = useState<string | null>(process.env.NEXT_PUBLIC_WS_TOKEN || null);
+  const [games, setGames] = useState<ApiGameSummary[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { status } = useWebSocket({
+    wsBaseUrl,
+    gameId: activeGameId,
+    token: wsToken,
+    enabled: Boolean(activeGameId),
+  });
+
+  const refreshGames = useCallback(async () => {
+    try {
+      const nextGames = await listGames();
+      setGames(nextGames);
+      const running = nextGames.find((g) => g.status === "running" || g.status === "queued");
+      if (running) {
+        setActiveGameId(running.game_id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to fetch games.");
+    }
+  }, [setActiveGameId]);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const cfg = await getApiConfig();
+        setWsBaseUrl(toWebSocketUrl(cfg.ws_url));
+      } catch {
+        // Keep fallback URL when API config is unavailable.
+      }
+      await refreshGames();
+    };
+    void load();
+  }, [refreshGames]);
+
+  const handleStart = useCallback(async (mode: "full" | "quick") => {
+    setLoading(true);
+    setError(null);
+    try {
+      const started = await startGame(mode, false);
+      setActiveGameId(started.game_id);
+      await refreshGames();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start game.");
+    } finally {
+      setLoading(false);
+    }
+  }, [refreshGames, setActiveGameId]);
+
+  const handleCancel = useCallback(async (gameId: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await cancelGame(gameId);
+      await refreshGames();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to cancel game.");
+    } finally {
+      setLoading(false);
+    }
+  }, [refreshGames]);
 
   return (
     <div className="h-screen flex flex-col bg-white">
       <RoundControls status={status} />
+      <RunControls
+        activeGameId={activeGameId}
+        games={games}
+        loading={loading}
+        error={error}
+        onRefresh={refreshGames}
+        onStart={handleStart}
+        onCancel={handleCancel}
+      />
       <div className="flex-1 min-h-0">
         <ResizablePanelGroup orientation="horizontal">
           {/* Left: Thought Stream */}

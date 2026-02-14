@@ -24,6 +24,7 @@ interface GameStore {
   speed: number; // ms between rounds in auto-play
   selectedAgent: string | null; // agent id for detail view
   gameJson: unknown | null; // raw game data for export
+  activeGameId: string | null;
 
   // Actions
   initGame: (data: GameInitData) => void;
@@ -36,6 +37,7 @@ interface GameStore {
   setGameOver: (winner: string | null, reflection: string | null) => void;
   setSelectedAgent: (id: string | null) => void;
   setGameJson: (data: unknown) => void;
+  setActiveGameId: (id: string | null) => void;
   reset: () => void;
 }
 
@@ -53,6 +55,7 @@ export const useGameState = create<GameStore>((set, get) => ({
   speed: 2000,
   selectedAgent: null,
   gameJson: null,
+  activeGameId: null,
 
   initGame: (data) => {
     const agents: Record<string, AgentState> = {};
@@ -76,6 +79,7 @@ export const useGameState = create<GameStore>((set, get) => ({
       winner: null,
       finalReflection: null,
       totalRounds: data.total_rounds || null,
+      activeGameId: data.game_id || null,
     });
   },
 
@@ -112,6 +116,7 @@ export const useGameState = create<GameStore>((set, get) => ({
     set({ gameOver: true, winner, finalReflection: reflection }),
   setSelectedAgent: (id) => set({ selectedAgent: id }),
   setGameJson: (data) => set({ gameJson: data }),
+  setActiveGameId: (id) => set({ activeGameId: id }),
   reset: () =>
     set({
       rounds: [],
@@ -125,5 +130,6 @@ export const useGameState = create<GameStore>((set, get) => ({
       playing: false,
       selectedAgent: null,
       gameJson: null,
+      activeGameId: null,
     }),
 }));

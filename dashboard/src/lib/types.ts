@@ -106,6 +106,7 @@ export interface RoundMessages {
 }
 
 export interface RoundData {
+  game_id?: string;
   round: number;
   grid: {
     size: number;
@@ -123,6 +124,7 @@ export interface RoundData {
 
 export interface GameInitData {
   type: "game_init";
+  game_id?: string;
   grid_size: number;
   agents: Record<string, Omit<AgentState, "color" | "eliminated_by" | "eliminated_round">>;
   families: FamilyConfig[];
@@ -136,8 +138,10 @@ export interface GameInitData {
 
 export interface GameOverData {
   type: "game_over";
+  game_id?: string;
   winner: string | null;
   winner_family: string | null;
   total_rounds: number;
   final_reflection: string | null;
+  cancelled?: boolean;
 }

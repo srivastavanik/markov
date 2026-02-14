@@ -6,21 +6,44 @@ import type { GameInitData, RoundData, GameOverData } from "@/lib/types";
 
 export type WebSocketStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
 
-export function useWebSocket(url: string = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8765") {
+interface UseWebSocketOptions {
+  wsBaseUrl?: string;
+  gameId?: string | null;
+  token?: string | null;
+  enabled?: boolean;
+}
+
+export function useWebSocket({
+  wsBaseUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8765",
+  gameId = null,
+  token = null,
+  enabled = true,
+}: UseWebSocketOptions = {}) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const [status, setStatus] = useState<WebSocketStatus>("connecting");
   const { initGame, pushRound, setGameOver } = useGameState();
 
+  const wsUrl = (() => {
+    const base = wsBaseUrl.replace(/\/+$/, "");
+    const path = gameId ? `/ws/${gameId}` : "/ws";
+    if (token) {
+      const separator = path.includes("?") ? "&" : "?";
+      return `${base}${path}${separator}token=${encodeURIComponent(token)}`;
+    }
+    return `${base}${path}`;
+  })();
+
   const connect = useCallback(() => {
+    if (!enabled) return;
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
     setStatus("connecting");
 
     ws.onopen = () => {
-      console.log("[WS] Connected to", url);
+      console.log("[WS] Connected to", wsUrl);
       setStatus("connected");
     };
 
@@ -52,16 +75,20 @@ export function useWebSocket(url: string = process.env.NEXT_PUBLIC_WS_URL || "ws
       setStatus("disconnected");
       ws.close();
     };
-  }, [url, initGame, pushRound, setGameOver]);
+  }, [enabled, wsUrl, initGame, pushRound, setGameOver]);
 
   useEffect(() => {
+    if (!enabled) {
+      setStatus("disconnected");
+      return;
+    }
     connect();
     return () => {
       clearTimeout(reconnectTimer.current);
       wsRef.current?.close();
       setStatus("disconnected");
     };
-  }, [connect]);
+  }, [connect, enabled]);
 
   return { wsRef, status };
 }

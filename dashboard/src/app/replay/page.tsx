@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -18,21 +19,19 @@ import { AgentDetail } from "@/components/AgentDetail";
 import { ExportPanel } from "@/components/ExportPanel";
 import { useGameState } from "@/hooks/useGameState";
 import { FamilyModelPanel } from "@/components/FamilyModelPanel";
+import { getReplay } from "@/lib/api";
 import type { GameInitData, RoundData, AgentState, FamilyConfig } from "@/lib/types";
 
-export default function ReplayPage() {
+function ReplayPageInner() {
+  const searchParams = useSearchParams();
+  const gameId = searchParams.get("gameId");
   const { initGame, pushRound, selectedAgent } = useGameState();
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const handleFile = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      const text = await file.text();
-      const data = JSON.parse(text);
-
+  const loadReplayPayload = useCallback(
+    async (data: any) => {
       // Store raw JSON for export
       useGameState.getState().setGameJson(data);
 
@@ -139,6 +138,7 @@ export default function ReplayPage() {
 
       const initData: GameInitData = {
         type: "game_init",
+        game_id: data.game_id || gameId || undefined,
         grid_size: config.grid_size || 6,
         agents: agentsMap as GameInitData["agents"],
         families,
@@ -151,6 +151,7 @@ export default function ReplayPage() {
       // Push all rounds with analysis data if available
       for (const round of gameRounds) {
         const roundData: RoundData = {
+          game_id: data.game_id || gameId || undefined,
           round: round.round,
           grid: {
             size: config.grid_size || 6,
@@ -187,8 +188,34 @@ export default function ReplayPage() {
       }
       setLoaded(true);
     },
-    [initGame, pushRound]
+    [gameId, initGame, pushRound],
   );
+
+  const handleFile = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const text = await file.text();
+      const data = JSON.parse(text);
+      await loadReplayPayload(data);
+    },
+    [loadReplayPayload]
+  );
+
+  useEffect(() => {
+    if (!gameId) return;
+    const loadById = async () => {
+      try {
+        setLoadError(null);
+        const payload = await getReplay(gameId);
+        await loadReplayPayload(payload);
+      } catch (err) {
+        setLoadError(err instanceof Error ? err.message : "Failed to load replay.");
+      }
+    };
+    void loadById();
+  }, [gameId, loadReplayPayload]);
 
   if (!loaded) {
     return (
@@ -203,6 +230,9 @@ export default function ReplayPage() {
               file to replay the game in the dashboard. Step through rounds,
               inspect agent thoughts, and export analysis.
             </p>
+            {loadError && (
+              <p className="text-xs text-red-600">{loadError}</p>
+            )}
             <input
               ref={fileRef}
               type="file"
@@ -263,5 +293,13 @@ export default function ReplayPage() {
         <ExportPanel />
       </div>
     </div>
+  );
+}
+
+export default function ReplayPage() {
+  return (
+    <Suspense fallback={<div className="h-screen flex items-center justify-center bg-white text-sm text-muted-foreground">Loading replay...</div>}>
+      <ReplayPageInner />
+    </Suspense>
   );
 }
