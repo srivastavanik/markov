@@ -1,0 +1,26 @@
+[project]
+name = "markov"
+version = "0.1.0"
+description = "LLM social survival experiment engine"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm",
+    "aiosqlite",
+    "pydantic>=2.0",
+    "pyyaml",
+    "websockets",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

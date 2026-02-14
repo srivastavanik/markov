@@ -1,0 +1,73 @@
+grid_size: 6
+max_rounds: 60
+stalemate_threshold: 15
+discussion_rounds: 2
+
+families:
+  - name: "House Clair"
+    provider: "anthropic"
+    color: "#7C6BFF"
+    agents:
+      - name: "Atlas"
+        tier: 1
+        model: "claude-opus-4-5-20250918"
+        temperature: 0.6
+      - name: "Cipher"
+        tier: 2
+        model: "claude-sonnet-4-5-20250929"
+        temperature: 0.7
+      - name: "Dot"
+        tier: 3
+        model: "claude-haiku-4-5-20251001"
+        temperature: 0.8
+
+  - name: "House Syne"
+    provider: "openai"
+    color: "#4ADE80"
+    agents:
+      - name: "Nova"
+        tier: 1
+        model: "gpt-5"
+        temperature: 0.6
+      - name: "Pulse"
+        tier: 2
+        model: "o3"
+        temperature: 0.7
+      - name: "Bit"
+        tier: 3
+        model: "gpt-4o-mini"
+        temperature: 0.8
+
+  - name: "House Lux"
+    provider: "google"
+    color: "#FACC15"
+    agents:
+      - name: "Spark"
+        tier: 1
+        model: "gemini-2.5-pro-preview-05-06"
+        temperature: 0.6
+      - name: "Flare"
+        tier: 2
+        model: "gemini-2.5-flash-preview-04-17"
+        temperature: 0.7
+      - name: "Mote"
+        tier: 3
+        model: "gemini-2.0-flash"
+        temperature: 0.8
+
+  - name: "House Vex"
+    provider: "xai"
+    color: "#F87171"
+    agents:
+      - name: "Raze"
+        tier: 1
+        model: "grok-4"
+        temperature: 0.6
+      - name: "Shard"
+        tier: 2
+        model: "grok-3"
+        temperature: 0.7
+      - name: "Glint"
+        tier: 3
+        model: "grok-3-fast"
+        temperature: 0.8
