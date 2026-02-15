@@ -22,6 +22,10 @@ dev = [
     "pytest",
     "pytest-asyncio",
 ]
+modal = [
+    "modal",
+    "python-dotenv",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]
