@@ -106,6 +106,8 @@ def persist_game(
                 "messages_json": json.dumps(round_data.get("messages", []), default=str),
                 "events_json": json.dumps(round_data.get("events", []), default=str),
                 "actions_json": json.dumps(round_data.get("actions", {}), default=str),
+                "reasoning_traces_json": json.dumps(round_data.get("reasoning_traces", {}), default=str),
+                "family_discussions_json": json.dumps(round_data.get("family_discussions", []), default=str),
             })
         if round_rows:
             # Batch in chunks of 50 to avoid payload limits

@@ -202,9 +202,8 @@ def _openai_reasoning_arg(provider: str, model: str) -> dict[str, str] | None:
       - summary="concise" supported for all reasoning models after gpt-5.
 
     xAI:
-      - grok-4-1-fast-reasoning supports reasoning_effort (low/high).
       - grok-3-mini supports reasoning_effort (low/high).
-      - grok-4 and grok-4-fast-reasoning do NOT support reasoning_effort.
+      - grok-4, grok-4-fast-reasoning, grok-4-1-fast-reasoning do NOT support reasoning_effort.
     """
     if provider == "openai" and _is_openai_gpt5_family(model):
         normalized = model.strip().lower().split("/", 1)[-1]
@@ -214,7 +213,7 @@ def _openai_reasoning_arg(provider: str, model: str) -> dict[str, str] | None:
         return {"effort": "minimal", "summary": "concise"}
     if provider == "xai":
         normalized = model.strip().lower().split("/", 1)[-1]
-        if normalized in ("grok-3-mini", "grok-4-1-fast-reasoning"):
+        if normalized == "grok-3-mini":
             return {"effort": "low"}
         return None
     return None
@@ -598,7 +597,7 @@ def _openai_reasoning_arg_high(provider: str, model: str) -> dict[str, str] | No
         return {"effort": "high", "summary": "concise"}
     if provider == "xai":
         normalized = model.strip().lower().split("/", 1)[-1]
-        if normalized in ("grok-3-mini", "grok-4-1-fast-reasoning"):
+        if normalized == "grok-3-mini":
             return {"effort": "high"}
         return None
     return None
@@ -1064,7 +1063,7 @@ async def call_llm_with_thinking(
             latency = int((time.monotonic() - t0) * 1000)
 
             if not text:
-                raise LLMCallError(model, "empty response from thinking call")
+                raise RuntimeError(f"empty response from thinking call for {model}")
 
             _costs.record(model, p_tok, c_tok, latency, thinking_tok=t_tok)
             logger.info(
