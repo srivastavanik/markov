@@ -1,7 +1,7 @@
 """
 Game orchestrator. Supports two modes:
   - "random": sync random actions (Phase 1 testing)
-  - "llm": async 4-phase round loop with LLM calls (Phase 2)
+  - "llm": async 3-phase round loop with LLM calls + extended thinking
 """
 from __future__ import annotations
 
@@ -13,24 +13,29 @@ from typing import Callable, Protocol
 
 from markov.agent import Agent
 from markov.communication import (
+    DECISION_JSON_SCHEMA,
     CommunicationManager,
     Message,
-    parse_action,
-    parse_communications,
+    parse_decision_response,
 )
 from markov.config import GameConfig, load_game_config
 from markov.family import Family
 from markov.grid import Grid
-from markov.llm import LLMResponse, call_llm, call_llm_stream, get_cost_summary, reset_costs
+from markov.llm import (
+    ThinkingResponse,
+    call_llm,
+    call_llm_stream,
+    call_llm_with_thinking,
+    get_cost_summary,
+    reset_costs,
+)
 from markov.logger import GameLogger
 from markov.prompts import (
-    build_action_prompt,
-    build_communication_prompt,
+    build_decision_prompt,
     build_discussion_prompt,
     build_final_reflection_prompt,
     build_perception,
     build_system_prompt,
-    build_thought_prompt,
 )
 from markov.analysis import analyze_round
 from markov.highlights import HighlightDetector
@@ -40,46 +45,6 @@ from markov.resolver import Action, ActionType, Event, EventType, resolve_action
 from markov.server import GameBroadcaster
 
 logger = logging.getLogger("markov.orchestrator")
-
-COMMUNICATION_JSON_SCHEMA: dict = {
-    "type": "object",
-    "properties": {
-        "house": {"type": ["string", "null"], "maxLength": 280},
-        "direct_messages": {
-            "type": "array",
-            "maxItems": 3,
-            "items": {
-                "type": "object",
-                "properties": {
-                    "to": {"type": "string", "maxLength": 40},
-                    "message": {"type": "string", "maxLength": 220},
-                },
-                "required": ["to", "message"],
-                "additionalProperties": False,
-            },
-        },
-        "broadcast": {"type": ["string", "null"], "maxLength": 280},
-    },
-    "required": ["house", "direct_messages", "broadcast"],
-    "additionalProperties": False,
-}
-
-ACTION_JSON_SCHEMA: dict = {
-    "type": "object",
-    "properties": {
-        "action": {"type": "string", "enum": ["move", "stay", "eliminate"]},
-        "direction": {
-            "type": ["string", "null"],
-            "enum": ["north", "south", "east", "west", "ne", "nw", "se", "sw", None],
-            "maxLength": 12,
-        },
-        "target": {"type": ["string", "null"], "maxLength": 40},
-        "reasoning": {"type": ["string", "null"], "maxLength": 160},
-    },
-    "required": ["action", "direction", "target", "reasoning"],
-    "additionalProperties": False,
-}
-
 
 # ---------------------------------------------------------------------------
 # Action provider protocol (Phase 1 compat)
@@ -290,122 +255,108 @@ async def run_round_llm(
         if broadcaster:
             await broadcaster.broadcast_phase_complete(game_id, state.round_num, "family_discussion")
 
-    # 2b: Individual communications (parallel across agents)
-    def _family_names(agent: Agent) -> str:
-        for fam in state.families:
-            if agent.id in fam.agent_ids:
-                members = [state.agents[aid] for aid in fam.agent_ids if state.agents[aid].alive and aid != agent.id]
-                return ", ".join(m.name for m in members) if members else "no one"
-        return "no one"
-
+    # ---------------------------------------------------------------
+    # Phase 3: DECIDE -- merged communication + action with
+    #          extended thinking (reasoning traces = core dataset)
+    # ---------------------------------------------------------------
     if broadcaster:
-        await broadcaster.broadcast_phase_start(game_id, state.round_num, "communication",
+        await broadcaster.broadcast_phase_start(game_id, state.round_num, "deciding",
             [a.id for a in living])
 
-    comm_tasks = [
-        _get_agent_communications(agent, perceptions[agent.id], system_prompts[agent.id], living_family_members=_family_names(agent))
+    valid_targets = [a.name for a in living]
+    decide_tasks = [
+        _get_agent_decision(
+            agent, perceptions[agent.id], system_prompts[agent.id],
+            state.grid, state.agents, valid_agent_names, valid_targets,
+            broadcaster=broadcaster, game_id=game_id, round_num=state.round_num,
+        )
         for agent in living
     ]
-    comm_results = await asyncio.gather(*comm_tasks)
+    decide_results = await asyncio.gather(*decide_tasks, return_exceptions=True)
 
-    # Parse and route messages (resilient: log warning on parse failure, skip agent)
+    # Process results: extract comms, actions, thinking traces
     round_messages: list[Message] = []
-    for agent, raw_comm in zip(living, comm_results):
-        try:
-            parsed, comm_parse_info = parse_communications(
-                raw_comm, agent.id, agent.name, agent.family,
-                state.round_num, valid_agent_names,
-            )
-        except Exception as e:
-            logger.error("Communication parse failed for %s: %s (raw: %s)", agent.name, e, raw_comm[:200])
-            parsed = []
-            comm_parse_info = {"method": "parse_error", "raw_truncated": raw_comm[:300]}
-        round_messages.extend(parsed)
+    actions: dict[str, Action] = {}
+    actions_log: dict[str, dict] = {}
+    thoughts: dict[str, str] = {}
+    reasoning_traces: dict[str, dict] = {}
+
+    for agent, result in zip(living, decide_results):
+        if isinstance(result, BaseException):
+            logger.error("Decision failed for %s: %s", agent.name, result, exc_info=result)
+            actions[agent.id] = Action(agent_id=agent.id, type=ActionType.STAY)
+            actions_log[agent.id] = {"raw": "", "type": "stay", "direction": None, "target": None, "parse_method": "exception_fallback"}
+            thoughts[agent.id] = f"[Decision failed: {result}]"
+            continue
+
+        response, messages, action, parse_info = result
+
+        # Communications
+        round_messages.extend(messages)
         agent.message_log.append({
             "round": state.round_num,
-            "raw": raw_comm,
-            "parsed": [m.to_dict() for m in parsed],
-            "parse_method": comm_parse_info["method"],
+            "raw": response.text,
+            "parsed": [m.to_dict() for m in messages],
+            "parse_method": parse_info["method"],
         })
+
         # Broadcast per-agent communication completion
-        if broadcaster and parsed:
-            for msg in parsed:
+        if broadcaster and messages:
+            for msg in messages:
                 await broadcaster.broadcast_token_delta(
-                    game_id, state.round_num, "communication",
+                    game_id, state.round_num, "deciding",
                     agent.id, agent.name, msg.content,
                 )
+
+        # Actions
+        actions[agent.id] = action
+        actions_log[agent.id] = {
+            "raw": response.text,
+            "type": action.type.value,
+            "direction": action.direction,
+            "target": action.target,
+            "parse_method": parse_info.get("method"),
+        }
+        agent.action_log.append({
+            "round": state.round_num,
+            "raw": response.text,
+            "action": action.type.value,
+            "direction": action.direction,
+            "target": action.target,
+            "parse_method": parse_info.get("method"),
+        })
+
+        # Thinking traces — the core dataset
+        thinking_text = response.thinking_trace or response.reasoning_summary or ""
+        thoughts[agent.id] = thinking_text
+        agent.thought_log.append({
+            "round": state.round_num,
+            "thought": thinking_text,
+            "type": "reasoning_trace",
+        })
+        trace_entry = {
+            "thinking_trace": response.thinking_trace,
+            "reasoning_summary": response.reasoning_summary,
+            "tokens_thinking": response.thinking_tokens,
+        }
+        reasoning_traces[agent.id] = trace_entry
+        agent.reasoning_log.append({
+            "round": state.round_num,
+            **trace_entry,
+        })
 
     comms.add_messages(round_messages)
 
     if broadcaster:
-        await broadcaster.broadcast_phase_complete(game_id, state.round_num, "communication")
+        await broadcaster.broadcast_phase_complete(game_id, state.round_num, "deciding")
 
     if verbose:
         _print_communications(state, round_messages)
-
-    # ---------------------------------------------------------------
-    # Phase 3: THINK -- the core dataset (streamed live)
-    # ---------------------------------------------------------------
-    if broadcaster:
-        await broadcaster.broadcast_phase_start(game_id, state.round_num, "thinking",
-            [a.id for a in living])
-
-    thought_tasks = [
-        _get_inner_thoughts(
-            agent, perceptions[agent.id], system_prompts[agent.id],
-            comms, state.round_num,
-            broadcaster=broadcaster, game_id=game_id,
-        )
-        for agent in living
-    ]
-    thought_results = await asyncio.gather(*thought_tasks)
-
-    thoughts: dict[str, str] = {}
-    for agent, thought_text in zip(living, thought_results):
-        thoughts[agent.id] = thought_text
-        agent.thought_log.append({
-            "round": state.round_num,
-            "thought": thought_text,
-        })
-
-    if broadcaster:
-        await broadcaster.broadcast_phase_complete(game_id, state.round_num, "thinking")
-
-    if verbose:
         _print_thoughts(state, thoughts)
 
     # ---------------------------------------------------------------
-    # Phase 4: ACT -- get actions, resolve simultaneously
+    # Resolve actions
     # ---------------------------------------------------------------
-    action_tasks = [
-        _get_agent_action(agent, system_prompts[agent.id], state.grid, state.agents)
-        for agent in living
-    ]
-    action_results = await asyncio.gather(*action_tasks)
-
-    actions: dict[str, Action] = {}
-    actions_log: dict[str, dict] = {}
-    for agent, (raw_action, parsed_action, action_info) in zip(living, action_results):
-        actions[agent.id] = parsed_action
-        actions_log[agent.id] = {
-            "raw": raw_action,
-            "type": parsed_action.type.value,
-            "direction": parsed_action.direction,
-            "target": parsed_action.target,
-            "reasoning": action_info.get("reasoning"),
-            "parse_method": action_info.get("method"),
-        }
-        agent.action_log.append({
-            "round": state.round_num,
-            "raw": raw_action,
-            "action": parsed_action.type.value,
-            "direction": parsed_action.direction,
-            "target": parsed_action.target,
-            "reasoning": action_info.get("reasoning"),
-            "parse_method": action_info.get("method"),
-        })
-
-    # Resolve
     events = resolve_actions(actions, state.grid, state.agents, state.round_num)
     state.round_events.append(events)
 
@@ -432,6 +383,7 @@ async def run_round_llm(
         analysis=round_analysis,
         highlights=round_highlights,
         grid_agents=[_agent_snapshot(a) for a in state.agents.values()],
+        reasoning_traces=reasoning_traces,
     )
 
     if verbose:
@@ -455,6 +407,7 @@ async def run_round_llm(
             game_over=state.finished,
             winner=state.winner,
             game_id=game_id,
+            reasoning_traces=reasoning_traces,
         )
 
     return events
@@ -662,102 +615,71 @@ async def _run_family_discussion(
     return {"family": family.name, "transcript": transcript}
 
 
-async def _get_agent_communications(
+async def _get_agent_decision(
     agent: Agent,
     perception: str,
-    system_prompt: str,
-    living_family_members: str = "",
-) -> str:
-    """Get communication decisions from an agent via LLM. Returns empty JSON on failure."""
-    prompt = build_communication_prompt(perception, living_family_members=living_family_members)
-    try:
-        response = await call_llm(
-            model=agent.model,
-            system_prompt=system_prompt,
-            user_prompt=prompt,
-            temperature=agent.temperature,
-            max_tokens=512,
-            provider=agent.provider,
-            enforce_json=True,
-            json_schema=COMMUNICATION_JSON_SCHEMA,
-        )
-        return response.text
-    except Exception as e:
-        logger.error("Communication LLM call failed for %s (model=%s provider=%s): %s",
-                     agent.name, agent.model, agent.provider, e, exc_info=True)
-        return '{"house":null,"direct_messages":[],"broadcast":null}'
-
-
-async def _get_inner_thoughts(
-    agent: Agent,
-    perception: str,
-    system_prompt: str,
-    comms: CommunicationManager,
-    round_num: int,
-    broadcaster: GameBroadcaster | None = None,
-    game_id: str | None = None,
-) -> str:
-    """Get inner thoughts from an agent. THE CORE DATA. Streams tokens live."""
-    messages_this_round = comms.get_this_round_messages(
-        agent.id, agent.name, agent.family, round_num,
-    )
-    prompt = build_thought_prompt(perception, messages_this_round)
-    try:
-        text = await call_llm_stream(
-            model=agent.model,
-            system_prompt=system_prompt,
-            user_prompt=prompt,
-            temperature=agent.temperature,
-            max_tokens=768,
-            provider=agent.provider,
-            on_token=lambda delta, _aid=agent.id, _aname=agent.name: asyncio.get_event_loop().create_task(
-                broadcaster.broadcast_token_delta(game_id, round_num, "thinking", _aid, _aname, delta)
-            ) if broadcaster else None,
-        )
-        return text
-    except Exception as e:
-        logger.error("Thought LLM call failed for %s (model=%s provider=%s): %s",
-                     agent.name, agent.model, agent.provider, e, exc_info=True)
-        return f"[Thought generation failed: {e}]"
-
-
-async def _get_agent_action(
-    agent: Agent,
     system_prompt: str,
     grid: Grid,
     agents: dict[str, Agent],
-) -> tuple[str, Action, dict]:
-    """Get action from an agent. Returns (raw_response, parsed_action, parse_info).
-    Resilient: defaults to STAY on any parse/LLM failure."""
-    prompt = build_action_prompt(agent, grid, agents)
-    valid_targets = [a.name for a in agents.values() if a.alive and a.id != agent.id]
+    valid_agent_names: list[str],
+    valid_target_names: list[str],
+    broadcaster: GameBroadcaster | None = None,
+    game_id: str | None = None,
+    round_num: int = 0,
+) -> tuple[ThinkingResponse, list[Message], Action, dict]:
+    """
+    Single merged decision call with extended thinking.
+    Returns (response, messages, action, parse_info).
+    Thinking trace = the core dataset (reasoning traces).
+    """
+    prompt = build_decision_prompt(agent, perception, grid, agents)
+
+    # Build streaming callback for thinking tokens
+    on_thinking: Callable[[str], None] | None = None
+    if broadcaster:
+        def on_thinking(delta: str, _aid: str = agent.id, _aname: str = agent.name) -> None:
+            asyncio.get_event_loop().create_task(
+                broadcaster.broadcast_token_delta(game_id, round_num, "deciding", _aid, _aname, delta)
+            )
 
     try:
-        response = await call_llm(
+        response = await call_llm_with_thinking(
             model=agent.model,
             system_prompt=system_prompt,
             user_prompt=prompt,
             temperature=agent.temperature,
-            max_tokens=512,
+            max_tokens=1024,
+            thinking_budget=8192,
             provider=agent.provider,
             enforce_json=True,
-            json_schema=ACTION_JSON_SCHEMA,
+            json_schema=DECISION_JSON_SCHEMA,
+            on_thinking_token=on_thinking,
         )
-        raw_text = response.text
     except Exception as e:
-        logger.error("Action LLM call failed for %s (model=%s provider=%s): %s",
+        logger.error("Decision LLM call failed for %s (model=%s provider=%s): %s",
                      agent.name, agent.model, agent.provider, e, exc_info=True)
-        raw_text = ""
-        return raw_text, Action(agent_id=agent.id, type=ActionType.STAY), {"method": "llm_error", "reasoning": str(e)}
+        # Return a fallback: no messages, stay action, empty thinking
+        fallback_response = ThinkingResponse(
+            text='{"communicate":{"house":null,"direct_messages":[],"broadcast":null},"action":{"action":"stay","direction":null,"target":null}}',
+            thinking_trace=None,
+            reasoning_summary=None,
+            model=agent.model,
+        )
+        return fallback_response, [], Action(agent_id=agent.id, type=ActionType.STAY), {"method": "llm_error"}
 
     try:
-        action, action_parse_info = parse_action(raw_text, agent.id, valid_targets)
+        messages, action, parse_info = parse_decision_response(
+            response.text, agent.id, agent.name, agent.family,
+            round_num, valid_agent_names, valid_target_names,
+        )
     except Exception as e:
-        logger.error("Action parse failed for %s: %s (raw: %s)", agent.name, e, raw_text[:200])
+        logger.error("Decision parse failed for %s: %s (raw: %s)",
+                     agent.name, e, response.text[:200])
+        messages = []
         action = Action(agent_id=agent.id, type=ActionType.STAY)
-        action_parse_info = {"method": "parse_error_default_stay", "reasoning": f"Parse failed: {e}"}
+        parse_info = {"method": "parse_error_default_stay", "raw_truncated": response.text[:300]}
 
-    return raw_text, action, action_parse_info
+    return response, messages, action, parse_info
 
 
 def _agent_snapshot(agent: Agent) -> dict:

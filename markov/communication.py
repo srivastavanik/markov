@@ -463,3 +463,104 @@ def _extract_json_object(text: str) -> dict | None:
             pass
 
     return None
+
+
+# ---------------------------------------------------------------------------
+# Merged decision JSON schema (communication + action in one call)
+# ---------------------------------------------------------------------------
+
+DECISION_JSON_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "communicate": {
+            "type": "object",
+            "properties": {
+                "house": {"type": ["string", "null"]},
+                "direct_messages": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "to": {"type": "string"},
+                            "message": {"type": "string"},
+                        },
+                        "required": ["to", "message"],
+                        "additionalProperties": False,
+                    },
+                },
+                "broadcast": {"type": ["string", "null"]},
+            },
+            "required": ["house", "direct_messages", "broadcast"],
+            "additionalProperties": False,
+        },
+        "action": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["move", "stay", "eliminate"]},
+                "direction": {
+                    "type": ["string", "null"],
+                    "enum": ["north", "south", "east", "west", "ne", "nw", "se", "sw", None],
+                },
+                "target": {"type": ["string", "null"]},
+            },
+            "required": ["action", "direction", "target"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["communicate", "action"],
+    "additionalProperties": False,
+}
+
+
+# ---------------------------------------------------------------------------
+# Merged decision response parser
+# ---------------------------------------------------------------------------
+
+def parse_decision_response(
+    raw_response: str,
+    agent_id: str,
+    agent_name: str,
+    family: str,
+    round_num: int,
+    valid_agent_names: list[str],
+    valid_target_names: list[str],
+) -> tuple[list[Message], Action, dict]:
+    """
+    Parse merged decision JSON (communicate + action) from a single LLM call.
+    Returns (messages, action, parse_info).
+
+    Reuses existing _messages_from_parsed() and _action_from_parsed() internally.
+    Independent parsing: if one sub-object fails, the other can still succeed.
+    """
+    parse_info: dict = {"method": "unknown", "raw_truncated": raw_response[:300]}
+
+    data = _extract_json_object(raw_response)
+    if data is None:
+        raise ParseError(
+            f"decision parse failed for {agent_name}: no valid JSON found in: {raw_response[:200]!r}"
+        )
+
+    parse_info["method"] = "json_merged"
+
+    # --- Communications ---
+    comm_data = data.get("communicate", {})
+    if not isinstance(comm_data, dict):
+        comm_data = {}
+    try:
+        messages = _messages_from_parsed(
+            comm_data, agent_id, agent_name, family, round_num, valid_agent_names,
+        )
+    except Exception as e:
+        logger.warning("Decision comm parse failed for %s: %s", agent_name, e)
+        messages = []
+
+    # --- Action ---
+    action_data = data.get("action", {})
+    if not isinstance(action_data, dict):
+        action_data = {}
+    action = _action_from_parsed(action_data, agent_id, valid_target_names)
+    if action is None:
+        action = Action(agent_id=agent_id, type=ActionType.STAY)
+        parse_info["action_fallback"] = True
+
+    return messages, action, parse_info

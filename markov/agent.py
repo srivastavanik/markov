@@ -27,6 +27,7 @@ class Agent:
     thought_log: list[dict] = field(default_factory=list)
     message_log: list[dict] = field(default_factory=list)
     action_log: list[dict] = field(default_factory=list)
+    reasoning_log: list[dict] = field(default_factory=list)
 
     @classmethod
     def from_config(cls, cfg: AgentConfig) -> Agent:
