@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
@@ -27,7 +27,6 @@ export function RunControls({
   onStart,
   onCancel,
 }: RunControlsProps) {
-  const [mode, setMode] = useState<"full" | "quick">("quick");
   const running = useMemo(
     () => games.find((g) => g.status === "running" || g.status === "queued"),
     [games],
@@ -62,15 +61,7 @@ export function RunControls({
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as "full" | "quick")}
-              className="h-9 rounded border border-black/20 px-2 text-sm bg-white"
-            >
-              <option value="quick">Quick Run (10 rounds cap)</option>
-              <option value="full">Full Run</option>
-            </select>
-            <Button size="sm" onClick={() => onStart(mode)} disabled={loading || Boolean(running)}>
+            <Button size="sm" onClick={() => onStart("full")} disabled={loading || Boolean(running)}>
               Start Game
             </Button>
             <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>

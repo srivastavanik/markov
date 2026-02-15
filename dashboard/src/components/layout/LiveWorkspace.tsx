@@ -16,10 +16,10 @@ const PROVIDER_LOGOS: Record<string, string> = {
 
 const TIER_LABELS: Record<number, string> = { 1: "Boss", 2: "Lt", 3: "Soldier" };
 
-type MsgTab = "reasoning" | "thoughts" | "family" | "dms" | "broadcasts" | "all";
+type MsgTab = "reasoning" | "family" | "dms" | "broadcasts" | "all";
 
 const TAB_TO_TYPE: Record<MsgTab, string | null> = {
-  all: null, reasoning: "reasoning", thoughts: "thought",
+  all: null, reasoning: "reasoning",
   family: "family", dms: "dm", broadcasts: "broadcast",
 };
 
@@ -138,10 +138,15 @@ export function LiveWorkspace() {
     if (!el) return;
     if (isNearBottom) {
       el.scrollTop = el.scrollHeight;
-    } else {
-      setUnreadCount((prev) => prev + 1);
     }
   }, [rounds.length, streamingTokens, isNearBottom]);
+
+  // Count unread messages only when new rounds arrive (not per-token)
+  useEffect(() => {
+    if (!isNearBottom) {
+      setUnreadCount((c) => c + 1);
+    }
+  }, [rounds.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Track which round is "new" for fade animation
   const newRoundNum = rounds.length > lastRoundCount.current ? rounds[rounds.length - 1]?.round : -1;
@@ -201,7 +206,7 @@ export function LiveWorkspace() {
           if (!agent) continue;
           if (activeAgent && agent.id !== activeAgent.id) continue;
           if (!activeAgent && !familyAgentIds.has(agent.id)) continue;
-          entries.push({ round: rn, type: "thought", agentId, agentName: agent.name, agentProvider: agent.provider, content: thought });
+          entries.push({ round: rn, type: "reasoning", agentId, agentName: agent.name, agentProvider: agent.provider, content: thought });
         }
       }
 
@@ -303,7 +308,7 @@ export function LiveWorkspace() {
 
         {/* Message type tabs */}
         <div className="flex shrink-0 border-b border-black/10">
-          {(["all", "reasoning", "thoughts", "family", "dms", "broadcasts"] as MsgTab[]).map((tab) => (
+          {(["all", "reasoning", "family", "dms", "broadcasts"] as MsgTab[]).map((tab) => (
             <button key={tab} onClick={() => setMsgTab(tab)}
               className={`flex-1 px-1 py-1.5 text-[10px] capitalize border-b-2 transition-colors ${msgTab === tab ? "border-black text-black font-medium" : "border-transparent text-black/35"}`}>
               {tab === "dms" ? "DMs" : tab === "all" ? "All" : tab}
@@ -389,7 +394,7 @@ export function LiveWorkspace() {
 
 interface StreamEntry {
   round: number;
-  type: "reasoning" | "thought" | "family" | "dm" | "broadcast";
+  type: "reasoning" | "family" | "dm" | "broadcast";
   agentId: string;
   agentName: string;
   agentProvider: string;
@@ -413,7 +418,6 @@ interface StreamEntry {
 
 const TYPE_STYLE: Record<string, { label: string; border: string; bg: string }> = {
   reasoning: { label: "reasoning", border: "border-black/15", bg: "bg-black/[0.02]" },
-  thought: { label: "thinking", border: "border-black/10", bg: "bg-black/[0.02]" },
   family: { label: "family", border: "border-blue-200", bg: "bg-blue-50/20" },
   dm: { label: "DM", border: "border-amber-200", bg: "bg-amber-50/20" },
   broadcast: { label: "broadcast", border: "border-black/10", bg: "" },

@@ -26,7 +26,7 @@ interface GameStore {
   selectedAgent: string | null; // agent id for detail view
   selectedFamily: string | null;
   focusedAgentIds: string[];
-  channelFilter: "all" | "thoughts" | "family" | "dm" | "broadcast";
+  channelFilter: "all" | "reasoning" | "family" | "dm" | "broadcast";
   highlightsOnly: boolean;
   searchQuery: string;
   viewMode: "board" | "relationships";
@@ -54,7 +54,7 @@ interface GameStore {
   setSelectedFamily: (family: string | null) => void;
   setFocusedAgentIds: (ids: string[]) => void;
   toggleFocusedAgentId: (id: string) => void;
-  setChannelFilter: (filter: "all" | "thoughts" | "family" | "dm" | "broadcast") => void;
+  setChannelFilter: (filter: "all" | "reasoning" | "family" | "dm" | "broadcast") => void;
   setHighlightsOnly: (on: boolean) => void;
   setSearchQuery: (q: string) => void;
   setViewMode: (mode: "board" | "relationships") => void;
