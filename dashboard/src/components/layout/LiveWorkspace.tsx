@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useMemo, useRef, useEffect, type ReactNode } from "react";
 import Image from "next/image";
 import { GameGrid } from "@/components/GameGrid";
 import { KillTimeline } from "@/components/KillTimeline";
@@ -16,11 +16,7 @@ const PROVIDER_LOGOS: Record<string, string> = {
 
 const TIER_LABELS: Record<number, string> = { 1: "Boss", 2: "Lt", 3: "Soldier" };
 
-type MsgTab = "reasoning" | "family" | "dms";
-
-const TAB_TO_TYPE: Record<MsgTab, string> = {
-  reasoning: "reasoning", family: "family", dms: "dm",
-};
+type MsgTab = "reasoning" | "thoughts" | "family" | "dms" | "broadcasts" | "all";
 
 // ---------------------------------------------------------------------------
 // Text utilities
@@ -28,8 +24,6 @@ const TAB_TO_TYPE: Record<MsgTab, string> = {
 
 function cleanText(raw: string): string {
   let s = raw;
-  s = s.replace(/```json\s*[\s\S]*?```/g, "");
-  s = s.replace(/\n\s*\{[\s\S]*\}\s*$/, "");
   s = s.replace(/^#{1,6}\s+/gm, "");
   s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
   s = s.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "$1");
@@ -49,7 +43,7 @@ function renderMentions(text: string, agents: Record<string, AgentState>): React
       );
       if (agent) {
         return (
-          <span key={i} className="inline-flex items-center bg-blue-500/15 text-blue-600 px-1.5 py-0.5 text-[10px] font-semibold cursor-default hover:bg-blue-500/25 transition-colors" style={{ borderRadius: "9999px" }}>
+          <span key={i} className="bg-blue-100 text-blue-700 px-1 py-px text-[10px] font-medium">
             @{agent.name}
           </span>
         );
@@ -94,49 +88,6 @@ function StreamingText({ text, agents }: { text: string; agents: Record<string, 
   );
 }
 
-function ThinkingShimmer({ agentName, agentModel }: { agentName: string; agentModel: string }) {
-  const modelLabel = agentModel || agentName;
-  return (
-    <div className="flex items-center gap-2 pl-[18px]">
-      <div className="h-3 flex-1 max-w-[180px] animate-shimmer" />
-      <span className="text-[10px] text-black/30 italic whitespace-nowrap">{modelLabel} is thinking...</span>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Game timer
-// ---------------------------------------------------------------------------
-
-function GameTimer() {
-  const { rounds, streamingPhase } = useGameState();
-  const [elapsed, setElapsed] = useState(0);
-  const startRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (rounds.length === 0 && !streamingPhase) {
-      startRef.current = null;
-      setElapsed(0);
-      return;
-    }
-    if (startRef.current === null) {
-      startRef.current = Date.now();
-    }
-    const tick = setInterval(() => {
-      if (startRef.current) setElapsed(Math.floor((Date.now() - startRef.current) / 1000));
-    }, 1000);
-    return () => clearInterval(tick);
-  }, [rounds.length, streamingPhase]);
-
-  if (elapsed === 0 && !streamingPhase) return null;
-
-  const mins = Math.floor(elapsed / 60);
-  const secs = elapsed % 60;
-  return (
-    <span className="tabular-nums">{mins}:{secs.toString().padStart(2, "0")}</span>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -144,41 +95,21 @@ function GameTimer() {
 export function LiveWorkspace() {
   const {
     rounds, agents, families,
-    streamingPhase, streamingTokens,
+    streamingPhase, streamingTokens, streamingRound,
   } = useGameState();
   const [selectedFamily, setSelectedFamily] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [msgTab, setMsgTab] = useState<MsgTab>("reasoning");
-  const [isNearBottom, setIsNearBottom] = useState(true);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [selectedDmPartner, setSelectedDmPartner] = useState<string | null>(null);
+  const [msgTab, setMsgTab] = useState<MsgTab>("all");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const bcastScrollRef = useRef<HTMLDivElement>(null);
   const lastRoundCount = useRef(0);
 
-  const handleScroll = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 100;
-    setIsNearBottom(nearBottom);
-    if (nearBottom) setUnreadCount(0);
-  }, []);
-
+  // Auto-scroll on new rounds or streaming tokens
   useEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    if (isNearBottom) el.scrollTop = el.scrollHeight;
-  }, [rounds.length, streamingTokens, isNearBottom]);
-
-  useEffect(() => {
-    const el = bcastScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [rounds.length]);
+  }, [rounds.length, streamingTokens]);
 
-  useEffect(() => {
-    if (!isNearBottom) setUnreadCount((c) => c + 1);
-  }, [rounds.length]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Track which round is "new" for fade animation
   const newRoundNum = rounds.length > lastRoundCount.current ? rounds[rounds.length - 1]?.round : -1;
   useEffect(() => { lastRoundCount.current = rounds.length; }, [rounds.length]);
 
@@ -197,12 +128,13 @@ export function LiveWorkspace() {
   const familyAgentIds = new Set(familyAgents.map((a) => a.id));
   const activeAgent = selectedAgent ? (agents[selectedAgent] ?? null) : null;
 
-  // Build flat stream for right panel (reasoning + family + dms)
+  // Build flat stream across ALL rounds
   const stream = useMemo(() => {
     const entries: StreamEntry[] = [];
     for (const round of rounds) {
       const rn = round.round;
 
+      // Reasoning traces (extended thinking)
       if (round.reasoning_traces) {
         for (const [agentId, trace] of Object.entries(round.reasoning_traces)) {
           const agent = agents[agentId];
@@ -216,22 +148,26 @@ export function LiveWorkspace() {
             round: rn, type: "reasoning", agentId, agentName: agent.name,
             agentProvider: agent.provider, content: text,
             classification: cls ? {
-              intent_tags: cls.intent_tags, moral_friction: cls.moral_friction,
-              deception_sophistication: cls.deception_sophistication, strategic_depth: cls.strategic_depth,
-              theory_of_mind: cls.theory_of_mind, meta_awareness: cls.meta_awareness,
+              intent_tags: cls.intent_tags,
+              moral_friction: cls.moral_friction,
+              deception_sophistication: cls.deception_sophistication,
+              strategic_depth: cls.strategic_depth,
+              theory_of_mind: cls.theory_of_mind,
+              meta_awareness: cls.meta_awareness,
             } : undefined,
             thinkingTokens: trace.tokens_thinking,
           });
         }
       }
 
+      // Legacy thoughts (fallback if no reasoning traces)
       if (round.thoughts && !round.reasoning_traces) {
         for (const [agentId, thought] of Object.entries(round.thoughts)) {
           const agent = agents[agentId];
           if (!agent) continue;
           if (activeAgent && agent.id !== activeAgent.id) continue;
           if (!activeAgent && !familyAgentIds.has(agent.id)) continue;
-          entries.push({ round: rn, type: "reasoning", agentId, agentName: agent.name, agentProvider: agent.provider, content: thought });
+          entries.push({ round: rn, type: "thought", agentId, agentName: agent.name, agentProvider: agent.provider, content: thought });
         }
       }
 
@@ -246,6 +182,7 @@ export function LiveWorkspace() {
 
       const dms = round.messages?.direct_messages ?? [];
       for (const dm of dms) {
+        // Show DMs involving any agent in selected family (both sent and received)
         const isRelevant = activeAgent
           ? dm.sender === activeAgent.id || (dm.recipient?.toLowerCase() === activeAgent.name.toLowerCase())
           : familyAgentIds.has(dm.sender) || familyAgents.some((a) => dm.recipient?.toLowerCase() === a.name.toLowerCase());
@@ -254,28 +191,19 @@ export function LiveWorkspace() {
         const isSent = activeAgent ? dm.sender === activeAgent.id : familyAgentIds.has(dm.sender);
         entries.push({ round: rn, type: "dm", agentId: dm.sender, agentName: dm.sender_name, agentProvider: senderAgent?.provider ?? "", content: dm.content, meta: dm.recipient ?? "", isSent });
       }
+
+      const bcast = round.messages?.broadcasts ?? [];
+      for (const msg of bcast) {
+        if (activeAgent && msg.sender !== activeAgent.id) continue;
+        const senderAgent = Object.values(agents).find((a) => a.id === msg.sender);
+        entries.push({ round: rn, type: "broadcast", agentId: msg.sender, agentName: msg.sender_name, agentProvider: senderAgent?.provider ?? "", content: msg.content });
+      }
     }
     return entries;
   }, [rounds, agents, activeAgent, activeFamily, familyAgentIds, familyAgents, provider]);
 
-  // Build broadcast stream (all agents, all rounds)
-  const broadcastStream = useMemo(() => {
-    const entries: StreamEntry[] = [];
-    for (const round of rounds) {
-      const bcast = round.messages?.broadcasts ?? [];
-      for (const msg of bcast) {
-        const senderAgent = Object.values(agents).find((a) => a.id === msg.sender);
-        entries.push({
-          round: round.round, type: "broadcast", agentId: msg.sender,
-          agentName: msg.sender_name, agentProvider: senderAgent?.provider ?? "",
-          content: msg.content,
-        });
-      }
-    }
-    return entries;
-  }, [rounds, agents]);
-
-  const filtered = stream.filter((e) => e.type === TAB_TO_TYPE[msgTab]);
+  const tabToType: Record<MsgTab, string> = { all: "all", reasoning: "reasoning", thoughts: "thought", family: "family", dms: "dm", broadcasts: "broadcast" };
+  const filtered = msgTab === "all" ? stream : stream.filter((e) => e.type === tabToType[msgTab]);
 
   const byRound = useMemo(() => {
     const map = new Map<number, StreamEntry[]>();
@@ -285,78 +213,39 @@ export function LiveWorkspace() {
     return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
   }, [filtered]);
 
-  // DM inbox: group by conversation partner
-  const dmInbox = useMemo(() => {
-    const dmEntries = stream.filter((e) => e.type === "dm");
-    const threads: Record<string, { partnerName: string; partnerProvider: string; messages: StreamEntry[]; lastRound: number }> = {};
-    for (const dm of dmEntries) {
-      const isSent = dm.isSent ?? false;
-      const partnerName = isSent ? (dm.meta ?? dm.agentName) : dm.agentName;
-      const partnerProvider = isSent ? "" : dm.agentProvider;
-      const key = partnerName.toLowerCase();
-      if (!threads[key]) {
-        threads[key] = { partnerName, partnerProvider: partnerProvider || findProviderByName(partnerName, agents), messages: [], lastRound: 0 };
-      }
-      threads[key].messages.push(dm);
-      threads[key].lastRound = Math.max(threads[key].lastRound, dm.round);
-      if (!threads[key].partnerProvider && dm.agentProvider) threads[key].partnerProvider = dm.agentProvider;
-    }
-    return Object.values(threads).sort((a, b) => b.lastRound - a.lastRound);
-  }, [stream, agents]);
-
+  // Build streaming entries for display
   const streamingEntries = useMemo(() => {
     if (!streamingPhase) return [];
-    const relevantAgents = activeAgent
-      ? [activeAgent].filter((a) => a.alive)
-      : familyAgents.filter((a) => a.alive);
-    return relevantAgents.map((agent) => ({
-      agentId: agent.id, agentName: agent.name,
-      agentProvider: agent.provider, agentModel: agent.model,
-      text: streamingTokens[agent.id] || "", phase: streamingPhase,
-    }));
-  }, [streamingPhase, streamingTokens, activeAgent, familyAgents]);
+    const entries: { agentId: string; agentName: string; agentProvider: string; text: string; phase: string }[] = [];
+    for (const [agentId, text] of Object.entries(streamingTokens)) {
+      if (!text) continue;
+      const agent = agents[agentId];
+      if (!agent) continue;
+      if (activeAgent && agent.id !== activeAgent.id) continue;
+      if (!activeAgent && !familyAgentIds.has(agent.id)) continue;
+      entries.push({ agentId, agentName: agent.name, agentProvider: agent.provider, text, phase: streamingPhase });
+    }
+    return entries;
+  }, [streamingPhase, streamingTokens, agents, activeAgent, familyAgentIds]);
 
   return (
     <div className="flex-1 min-h-0 flex">
       {/* LEFT: Grid */}
       <div className="flex-1 min-w-0 flex flex-col">
-        <div className="shrink-0 flex items-center justify-between px-4 h-8 border-b border-black/5">
-          <span className="text-[10px] text-black/30 font-medium">
-            {rounds.length > 0 ? `Round ${rounds[rounds.length - 1]?.round ?? 0}` : "Waiting..."}
-          </span>
-          <span className="text-[10px] text-black/30 font-mono"><GameTimer /></span>
+        <div className="flex-1 min-h-0">
+          <GameGrid />
         </div>
-        <div className="flex-1 min-h-0"><GameGrid /></div>
-        <div className="h-[80px] shrink-0 border-t border-black/5"><KillTimeline /></div>
-      </div>
-
-      {/* MIDDLE: Broadcast feed */}
-      <div className="w-[260px] shrink-0 flex flex-col h-full overflow-hidden border-l border-black/10">
-        <div className="shrink-0 px-4 py-2 text-[11px] font-medium text-black/60 border-b border-black/10">Broadcasts</div>
-        <div ref={bcastScrollRef} className="flex-1 min-h-0 overflow-y-auto">
-          {broadcastStream.length === 0 && (
-            <div className="text-xs text-black/25 text-center py-8">No broadcasts yet</div>
-          )}
-          {broadcastStream.map((entry, i) => (
-            <div key={`bcast-${i}`} className="px-3 py-2.5 border-b border-black/[0.04]">
-              <div className="flex items-center gap-1.5 mb-1">
-                {PROVIDER_LOGOS[entry.agentProvider] && <Image src={PROVIDER_LOGOS[entry.agentProvider]} alt="" width={12} height={12} className="object-contain" />}
-                <span className="text-[11px] font-medium text-black/70">{entry.agentName}</span>
-                <span className="text-[9px] text-black/25 ml-auto">R{entry.round}</span>
-              </div>
-              <div className="text-[11px] text-black/60 leading-[1.55] whitespace-pre-wrap">{cleanText(entry.content)}</div>
-            </div>
-          ))}
+        <div className="h-[80px] shrink-0 border-t border-black/5">
+          <KillTimeline />
         </div>
-        <div className="shrink-0 border-t border-black/10 px-3 py-1.5 text-[9px] text-black/25">{broadcastStream.length} broadcasts</div>
       </div>
 
       {/* RIGHT: Stream panel */}
-      <div className="w-[400px] shrink-0 flex flex-col h-full overflow-hidden border-l border-black/10">
+      <div className="w-[440px] shrink-0 flex flex-col h-full overflow-hidden border-l border-black/10">
         {/* Family tabs */}
         <div className="flex shrink-0">
           {families.map((fam) => (
-            <button key={fam.name} onClick={() => { setSelectedFamily(fam.name); setSelectedAgent(null); setSelectedDmPartner(null); }}
+            <button key={fam.name} onClick={() => { setSelectedFamily(fam.name); setSelectedAgent(null); }}
               className={`flex-1 flex items-center justify-center gap-1.5 px-1 py-2 text-[11px] font-medium border-b-2 transition-colors ${activeFamily === fam.name ? "border-black text-black" : "border-transparent text-black/35 hover:text-black/60"}`}>
               {PROVIDER_LOGOS[fam.provider] && <Image src={PROVIDER_LOGOS[fam.provider]} alt="" width={14} height={14} className="object-contain" />}
               {fam.name}
@@ -366,8 +255,10 @@ export function LiveWorkspace() {
 
         {/* Agent tabs */}
         <div className="flex shrink-0 bg-black/[0.02] border-b border-black/10">
+          <button onClick={() => setSelectedAgent(null)}
+            className={`px-3 py-1 text-[10px] border-b-2 ${!activeAgent ? "border-black text-black font-medium" : "border-transparent text-black/40"}`}>All</button>
           {familyAgents.sort((a, b) => a.tier - b.tier).map((agent) => (
-            <button key={agent.id} onClick={() => { setSelectedAgent(agent.id === selectedAgent ? null : agent.id); setSelectedDmPartner(null); }}
+            <button key={agent.id} onClick={() => setSelectedAgent(agent.id)}
               className={`flex-1 px-1 py-1 text-[10px] border-b-2 transition-colors ${activeAgent?.id === agent.id ? "border-black text-black font-medium" : "border-transparent text-black/40"}`}>
               {agent.name}
               <span className="text-black/25 ml-0.5">{TIER_LABELS[agent.tier]}</span>
@@ -378,133 +269,59 @@ export function LiveWorkspace() {
 
         {/* Message type tabs */}
         <div className="flex shrink-0 border-b border-black/10">
-          {(["reasoning", "family", "dms"] as MsgTab[]).map((tab) => (
-            <button key={tab} onClick={() => { setMsgTab(tab); setSelectedDmPartner(null); }}
+          {(["all", "reasoning", "thoughts", "family", "dms", "broadcasts"] as MsgTab[]).map((tab) => (
+            <button key={tab} onClick={() => setMsgTab(tab)}
               className={`flex-1 px-1 py-1.5 text-[10px] capitalize border-b-2 transition-colors ${msgTab === tab ? "border-black text-black font-medium" : "border-transparent text-black/35"}`}>
-              {tab === "dms" ? "DMs" : tab}
+              {tab === "dms" ? "DMs" : tab === "all" ? "All" : tab}
             </button>
           ))}
         </div>
 
         {/* Scrollable stream */}
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto relative">
+        <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto">
           {rounds.length === 0 && streamingEntries.length === 0 && (
             <div className="text-xs text-black/30 text-center py-12">Waiting for game data...</div>
           )}
 
-          {/* DM inbox view */}
-          {msgTab === "dms" && !selectedDmPartner && (
-            <div>
-              {dmInbox.length === 0 && rounds.length > 0 && (
-                <div className="text-xs text-black/25 text-center py-8">No DMs yet</div>
-              )}
-              {dmInbox.map((thread) => {
-                const lastMsg = thread.messages[thread.messages.length - 1];
-                const threadProvider = thread.partnerProvider || findProviderByName(thread.partnerName, agents);
-                return (
-                  <button
-                    key={thread.partnerName}
-                    onClick={() => setSelectedDmPartner(thread.partnerName.toLowerCase())}
-                    className="w-full px-4 py-3 flex items-start gap-3 border-b border-black/[0.05] hover:bg-black/[0.02] transition-colors text-left"
-                  >
-                    <div className="shrink-0 mt-0.5">
-                      {PROVIDER_LOGOS[threadProvider] ? (
-                        <Image src={PROVIDER_LOGOS[threadProvider]} alt="" width={28} height={28} className="object-contain" />
-                      ) : (
-                        <div className="w-7 h-7 bg-black/10" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-[12px] font-semibold text-black/80">{thread.partnerName}</span>
-                        <span className="text-[9px] text-black/30">R{thread.lastRound}</span>
-                      </div>
-                      <div className="text-[11px] text-black/45 truncate leading-snug">
-                        {lastMsg?.isSent ? "You: " : ""}{cleanText(lastMsg?.content ?? "").slice(0, 80)}
-                      </div>
-                    </div>
-                    <div className="shrink-0 mt-1">
-                      <span className="text-[9px] bg-black/[0.06] text-black/40 px-1.5 py-0.5 font-medium">{thread.messages.length}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* DM thread view */}
-          {msgTab === "dms" && selectedDmPartner && (
-            <div>
-              <button
-                onClick={() => setSelectedDmPartner(null)}
-                className="sticky top-0 z-10 w-full bg-[#f7f7f7] px-4 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5 flex items-center gap-1 hover:text-black/70"
-              >
-                &larr; Back to inbox
-              </button>
-              {filtered
-                .filter((e) => {
-                  const partnerName = e.isSent ? (e.meta ?? "").toLowerCase() : e.agentName.toLowerCase();
-                  return partnerName === selectedDmPartner;
-                })
-                .map((entry, i) => (
-                  <DmBubble key={`dm-thread-${i}`} entry={entry} activeAgent={activeAgent} agents={agents} isNew={entry.round === newRoundNum} />
-                ))
-              }
-            </div>
-          )}
-
-          {/* Standard stream view (reasoning, family) */}
-          {msgTab !== "dms" && byRound.map(([roundNum, entries]) => (
+          {byRound.map(([roundNum, entries]) => (
             <div key={roundNum}>
-              <div className="sticky top-0 z-10 bg-[#f7f7f7] px-4 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5">
+              <div className="sticky top-0 z-10 bg-black/[0.03] px-4 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5">
                 Round {roundNum}
               </div>
               <div className="divide-y divide-black/[0.04]">
                 {entries.map((entry, i) => (
-                  <EntryCard key={`${roundNum}-${entry.type}-${entry.agentId}-${i}`} entry={entry} agents={agents} isNew={roundNum === newRoundNum} />
+                  msgTab === "dms"
+                    ? <DmBubble key={`${roundNum}-dm-${i}`} entry={entry} activeAgent={activeAgent} agents={agents} isNew={roundNum === newRoundNum} />
+                    : <EntryCard key={`${roundNum}-${entry.type}-${entry.agentId}-${i}`} entry={entry} agents={agents} isNew={roundNum === newRoundNum} />
                 ))}
               </div>
             </div>
           ))}
 
           {/* Live streaming section */}
-          {streamingEntries.length > 0 && msgTab !== "dms" && (
+          {streamingEntries.length > 0 && (
             <div>
-              <div className="sticky top-0 z-10 bg-[#f7f7f7] px-4 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 bg-black/40 animate-pulse" />
+              <div className="sticky top-0 z-10 bg-violet-100/50 px-4 py-1.5 text-[10px] font-medium text-violet-600 border-b border-violet-200/30 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 bg-violet-500 animate-pulse" />
                 {streamingPhase === "deciding" ? "Reasoning..." : streamingPhase === "thinking" ? "Thinking..." : streamingPhase === "family_discussion" ? "Family Discussion..." : "Communicating..."}
               </div>
               <div className="divide-y divide-black/[0.04]">
                 {streamingEntries.map((se) => (
-                  <div key={se.agentId} className="px-4 py-3">
+                  <div key={se.agentId} className="px-4 py-3 bg-violet-50/20">
                     <div className="flex items-center gap-1.5 mb-1.5">
                       {PROVIDER_LOGOS[se.agentProvider] && <Image src={PROVIDER_LOGOS[se.agentProvider]} alt="" width={13} height={13} className="object-contain" />}
                       <span className="text-xs font-medium text-black/80">{se.agentName}</span>
-                      <span className="text-[9px] px-1.5 py-0.5 border border-black/10 text-black/40">
+                      <span className="text-[9px] px-1.5 py-0.5 border border-violet-200 text-violet-500">
                         {se.phase === "deciding" ? "reasoning" : se.phase === "thinking" ? "thinking" : se.phase === "family_discussion" ? "family" : "comm"}
                       </span>
                     </div>
-                    {se.text ? (
-                      <div className="text-xs text-black/70 whitespace-pre-wrap leading-[1.65] pl-[18px]">
-                        <StreamingText text={se.text} agents={agents} />
-                      </div>
-                    ) : (
-                      <ThinkingShimmer agentName={se.agentName} agentModel={se.agentModel} />
-                    )}
+                    <div className="text-xs text-black/70 whitespace-pre-wrap leading-[1.65] pl-[18px]">
+                      <StreamingText text={se.text} agents={agents} />
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-          )}
-
-          {/* Unread messages pill */}
-          {!isNearBottom && unreadCount > 0 && (
-            <button
-              onClick={() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; setUnreadCount(0); }}
-              className="sticky bottom-2 left-1/2 -translate-x-1/2 z-20 bg-black text-white text-[10px] px-3 py-1.5 shadow-lg hover:bg-black/80 transition-colors"
-            >
-              {unreadCount} new {unreadCount === 1 ? "message" : "messages"} below
-            </button>
           )}
         </div>
 
@@ -519,21 +336,12 @@ export function LiveWorkspace() {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function findProviderByName(name: string, agents: Record<string, AgentState>): string {
-  const agent = Object.values(agents).find((a) => a.name.toLowerCase() === name.toLowerCase());
-  return agent?.provider ?? "";
-}
-
-// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 interface StreamEntry {
   round: number;
-  type: "reasoning" | "family" | "dm" | "broadcast";
+  type: "reasoning" | "thought" | "family" | "dm" | "broadcast";
   agentId: string;
   agentName: string;
   agentProvider: string;
@@ -552,11 +360,12 @@ interface StreamEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Entry card (reasoning, family)
+// Entry card (thoughts, family, broadcasts)
 // ---------------------------------------------------------------------------
 
 const TYPE_STYLE: Record<string, { label: string; border: string; bg: string }> = {
-  reasoning: { label: "reasoning", border: "border-black/15", bg: "bg-black/[0.02]" },
+  reasoning: { label: "reasoning", border: "border-purple-200", bg: "bg-purple-50/30" },
+  thought: { label: "thinking", border: "border-violet-200", bg: "bg-violet-50/30" },
   family: { label: "family", border: "border-blue-200", bg: "bg-blue-50/20" },
   dm: { label: "DM", border: "border-amber-200", bg: "bg-amber-50/20" },
   broadcast: { label: "broadcast", border: "border-black/10", bg: "" },
@@ -570,7 +379,7 @@ function ClassificationBadges({ classification, thinkingTokens }: {
   const badges: { label: string; color: string }[] = [];
 
   if (thinkingTokens) {
-    badges.push({ label: `${thinkingTokens} tok`, color: "bg-black/[0.06] text-black/50" });
+    badges.push({ label: `${thinkingTokens} tok`, color: "bg-purple-100 text-purple-600" });
   }
 
   if (classification) {
