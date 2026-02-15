@@ -4,7 +4,6 @@ import { useMemo } from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { ApiGameSummary } from "@/lib/api";
 
@@ -37,64 +36,57 @@ export function RunControls({
   );
 
   return (
-    <div className="px-3 py-2 border-b border-black/10 bg-background">
-      <Card className="border-black/10 shadow-sm">
-        <CardContent className="p-3 space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">
-              Run Management
-            </span>
-            {running ? (
-              <Badge variant="outline" className="text-[10px]">Active: {running.game_id}</Badge>
-            ) : (
-              <Badge variant="outline" className="text-[10px]">Idle</Badge>
-            )}
-            {activeGameId && (
-              <span className="text-xs text-muted-foreground">
-                Stream: <code>{activeGameId}</code>
-              </span>
-            )}
-            {activeSummary && (
-              <Badge variant="outline" className="text-[10px]">
-                Status: {activeSummary.status}
-              </Badge>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" onClick={() => onStart("full")} disabled={loading || Boolean(running)}>
-              Start Game
-            </Button>
-            <Button size="sm" variant="outline" onClick={onRefresh} disabled={loading}>
-              Refresh
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => running && onCancel(running.game_id)}
-              disabled={!running}
-            >
-              Cancel Active
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+    <div className="px-2 py-2 bg-background">
+      <div className="space-y-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-medium">
+            Run Management
+          </span>
+          {running ? (
+            <Badge variant="outline" className="text-[9px]">Active: {running.game_id}</Badge>
+          ) : (
+            <Badge variant="outline" className="text-[9px]">Idle</Badge>
+          )}
+          {activeSummary && (
+            <Badge variant="outline" className="text-[9px]">
+              {activeSummary.status}
+            </Badge>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button size="sm" className="h-7 text-xs" onClick={() => onStart("full")} disabled={loading || Boolean(running)}>
+            Start Game
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRefresh} disabled={loading}>
+            Refresh
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => running && onCancel(running.game_id)}
+            disabled={!running}
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+      {error && <p className="mt-1.5 text-[10px] text-red-600">{error}</p>}
       {activeSummary?.status === "failed" && activeSummary.error && (
-        <p className="mt-2 text-xs text-red-600">
-          Active run failed: {activeSummary.error}
+        <p className="mt-1.5 text-[10px] text-red-600 truncate">
+          Failed: {activeSummary.error}
         </p>
       )}
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs px-1">
-        <span className="text-muted-foreground mr-1">Recent:</span>
-        {games.slice(0, 8).map((game) => (
+      <div className="mt-1.5 flex flex-wrap items-center gap-1 text-[10px]">
+        <span className="text-muted-foreground">Recent:</span>
+        {games.slice(0, 5).map((game) => (
           <Link
             key={game.game_id}
             href={`/replay?gameId=${encodeURIComponent(game.game_id)}`}
-            className="rounded border border-black/15 px-2 py-1 hover:bg-black/5 bg-white"
-            title={game.status === "failed" && game.error ? game.error : undefined}
+            className="rounded border border-black/15 px-1.5 py-0.5 hover:bg-black/5 bg-white truncate max-w-[120px]"
+            title={`${game.game_id} · ${game.status}${game.status === "failed" && game.error ? ` · ${game.error}` : ""}`}
           >
-            {game.game_id} · {game.status}
-            {game.status === "failed" && game.error ? ` · ${game.error}` : ""}
+            {game.game_id.slice(-8)} · {game.status}
           </Link>
         ))}
         {games.length === 0 && <span className="text-muted-foreground">No runs yet.</span>}

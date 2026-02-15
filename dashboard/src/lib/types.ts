@@ -43,6 +43,7 @@ export interface MessageData {
   content: string;
   family: string;
   sent_at?: string | null;
+  phase?: string | null;
 }
 
 export interface HighlightData {

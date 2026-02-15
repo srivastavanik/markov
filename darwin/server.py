@@ -305,12 +305,16 @@ class GameBroadcaster:
         self,
         message: Message,
         game_id: str | None = None,
+        phase: str | None = None,
     ) -> None:
+        payload = message.to_dict()
+        if phase:
+            payload["phase"] = phase
         await self.broadcast({
             "type": "message",
             "game_id": game_id,
             "round": message.round,
-            "message": message.to_dict(),
+            "message": payload,
         }, game_id=game_id)
 
     async def broadcast_game_over(

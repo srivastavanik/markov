@@ -18,74 +18,56 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Side gutter panel — renders recommendations for a set of families
+// Corner panel — renders recommendations for a single family
 // ---------------------------------------------------------------------------
 
-export function OptimalMovesSidePanel({
-  familyNames,
+export function OptimalMovesCornerPanel({
+  familyName,
   allAgents,
   families,
   gridSize,
-  side,
 }: {
-  familyNames: string[];
+  familyName: string;
   allAgents: AgentState[];
   families: FamilyConfig[];
   gridSize: number;
-  side: "left" | "right";
 }) {
   const recommendations = useMemo(() => {
     if (allAgents.length === 0) return {};
     return computeOptimalMoves(allAgents, gridSize);
   }, [allAgents, gridSize]);
 
-  const alive = allAgents.filter((a) => a.alive);
+  const fam = families.find((f) => f.name === familyName);
+  const alive = allAgents
+    .filter((a) => a.alive && a.family === familyName)
+    .sort((a, b) => a.tier - b.tier);
 
-  const familyGroups = familyNames
-    .map((name) => {
-      const fam = families.find((f) => f.name === name);
-      const agents = alive
-        .filter((a) => a.family === name)
-        .sort((a, b) => a.tier - b.tier);
-      return {
-        name,
-        color: fam?.color || getFamilyColor(name),
-        provider: fam?.provider ?? "",
-        agents,
-      };
-    })
-    .filter((g) => g.agents.length > 0);
+  if (alive.length === 0) return null;
 
-  if (familyGroups.length === 0) return <div className="w-[180px] shrink-0" />;
+  const color = fam?.color || getFamilyColor(familyName);
 
   return (
-    <div className={`w-[180px] shrink-0 flex flex-col gap-3 overflow-y-auto py-2 ${side === "left" ? "pr-2" : "pl-2"}`}>
-      {familyGroups.map((group) => (
-        <div key={group.name}>
-          {/* Family header */}
-          <div className="flex items-center gap-1.5 mb-1 px-1">
-            <span className="text-[9px] font-medium text-black/30 uppercase tracking-wider">
-              {group.name}
-            </span>
-          </div>
+    <div className="flex flex-col gap-2 overflow-y-auto p-2">
+      {/* Family header */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] font-semibold text-black/40 uppercase tracking-wider">
+          {familyName}
+        </span>
+      </div>
 
-          {/* Agent recommendations */}
-          <div className="space-y-1.5">
-            {group.agents.map((agent) => {
-              const rec = recommendations[agent.id];
-              if (!rec) return null;
-              return (
-                <RecommendationCard
-                  key={agent.id}
-                  agent={agent}
-                  rec={rec}
-                  familyColor={group.color}
-                />
-              );
-            })}
-          </div>
-        </div>
-      ))}
+      {/* Agent recommendations */}
+      {alive.map((agent) => {
+        const rec = recommendations[agent.id];
+        if (!rec) return null;
+        return (
+          <RecommendationCard
+            key={agent.id}
+            agent={agent}
+            rec={rec}
+            familyColor={color}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -107,16 +89,16 @@ function RecommendationCard({
   const confidence = Math.round(rec.score * 100);
 
   return (
-    <div className="px-2 py-1.5 border border-black/[0.06] bg-white">
-      <div className="flex items-center justify-between mb-0.5">
-        <span className="text-[10px] font-medium text-black/70">
+    <div className="px-2.5 py-2 border border-black/[0.06] bg-white">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] font-semibold text-black/70">
           {agent.name}
         </span>
-        <span className="text-[9px] text-black/30 tabular-nums">
+        <span className="text-[10px] text-black/35 tabular-nums font-medium">
           {icon} {label} {confidence}%
         </span>
       </div>
-      <p className="text-[9px] text-black/40 leading-[1.4]">
+      <p className="text-[10px] text-black/45 leading-[1.5]">
         {rec.rationale}
       </p>
     </div>

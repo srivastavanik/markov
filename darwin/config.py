@@ -51,6 +51,8 @@ class GameConfig(BaseModel):
     grid_size: int = 7
     max_rounds: int = 60
     stalemate_threshold: int = 15
+    shrink_interval: int = 5            # shrink grid every N rounds (0 = disabled)
+    min_grid_size: int = 3              # smallest the grid can shrink to
     discussion_rounds: int = 2
     discussion_timeout_s: float = 25.0
     decision_timeout_s: float = 45.0

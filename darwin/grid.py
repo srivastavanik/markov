@@ -137,19 +137,68 @@ class Grid:
             pos = self._positions.pop(agent_id)
             del self._occupants[pos]
 
-    def shrink(self, new_size: int, living_agent_ids: list[str]) -> None:
-        """Shrink grid to new_size, randomly repositioning all living agents.
-        Avoids positional bias — everyone gets a fresh random placement."""
+    def shrink(self, new_size: int) -> dict[str, tuple[tuple[int, int], tuple[int, int]]]:
+        """Shrink grid to new_size, pushing border agents inward.
+
+        Agents on the removed edge (row >= new_size or col >= new_size) are
+        clamped to the nearest valid position. If that cell is occupied,
+        BFS finds the closest empty cell within new bounds.
+
+        Returns dict mapping displaced agent_id -> (old_pos, new_pos).
+        """
         if new_size >= self.size:
-            return
+            return {}
+
         self.size = new_size
-        self._occupants.clear()
-        self._positions.clear()
-        all_cells = [(r, c) for r in range(new_size) for c in range(new_size)]
-        random.shuffle(all_cells)
-        for agent_id, pos in zip(living_agent_ids, all_cells):
-            self._occupants[pos] = agent_id
-            self._positions[agent_id] = pos
+
+        # Identify displaced agents (now out of bounds)
+        displaced: list[tuple[str, tuple[int, int]]] = []
+        for agent_id in list(self._positions):
+            pos = self._positions[agent_id]
+            r, c = pos
+            if r >= new_size or c >= new_size:
+                displaced.append((agent_id, pos))
+                del self._occupants[pos]
+                del self._positions[agent_id]
+
+        # Process closest-to-edge first so they land near their original spot
+        displaced.sort(key=lambda x: max(x[1][0], x[1][1]))
+
+        moves: dict[str, tuple[tuple[int, int], tuple[int, int]]] = {}
+        for agent_id, old_pos in displaced:
+            # Clamp to new max coordinate (move inward by 1)
+            clamped = (min(old_pos[0], new_size - 1), min(old_pos[1], new_size - 1))
+            target = self._nearest_empty(clamped)
+            if target is not None:
+                self._occupants[target] = agent_id
+                self._positions[agent_id] = target
+                moves[agent_id] = (old_pos, target)
+
+        return moves
+
+    def _nearest_empty(self, start: tuple[int, int]) -> tuple[int, int] | None:
+        """Find nearest empty in-bounds cell via BFS from start."""
+        from collections import deque
+
+        if self.in_bounds(start) and start not in self._occupants:
+            return start
+
+        visited: set[tuple[int, int]] = {start}
+        queue: deque[tuple[int, int]] = deque([start])
+        while queue:
+            r, c = queue.popleft()
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+                    pos = (r + dr, c + dc)
+                    if pos in visited or not self.in_bounds(pos):
+                        continue
+                    visited.add(pos)
+                    if pos not in self._occupants:
+                        return pos
+                    queue.append(pos)
+        return None
 
     # ------------------------------------------------------------------
     # Rendering

@@ -28,7 +28,17 @@ export function ThoughtStream() {
   const endRef = useRef<HTMLDivElement>(null);
   const [collapsedRounds, setCollapsedRounds] = useState<Set<number>>(new Set());
 
-  const visibleRounds = rounds.slice(0, currentRound);
+  const visibleRounds = useMemo(() => {
+    const seen = new Set<number>();
+    const deduped: typeof rounds = [];
+    for (const r of rounds.slice(0, currentRound)) {
+      if (!seen.has(r.round)) {
+        seen.add(r.round);
+        deduped.push(r);
+      }
+    }
+    return deduped;
+  }, [rounds, currentRound]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });

@@ -4,7 +4,7 @@ import { useState, useMemo, useRef, useEffect, useCallback, type ReactNode } fro
 import Image from "next/image";
 import { GameGrid } from "@/components/GameGrid";
 import { KillTimeline } from "@/components/KillTimeline";
-import { OptimalMovesSidePanel } from "@/components/OptimalMovesPanel";
+import { OptimalMovesCornerPanel } from "@/components/OptimalMovesPanel";
 import { useGameState } from "@/hooks/useGameState";
 import type { AgentState } from "@/lib/types";
 
@@ -142,7 +142,7 @@ function GameTimer() {
 // Main component
 // ---------------------------------------------------------------------------
 
-export function LiveWorkspace() {
+export function LiveWorkspace({ runControls }: { runControls?: ReactNode }) {
   const {
     rounds, agents, families, gridSize, currentRound,
     streamingPhase, streamingTokens, liveMessages,
@@ -176,6 +176,41 @@ export function LiveWorkspace() {
     setBcastIsNearBottom(nearBottom);
     if (nearBottom) setBcastUnreadCount(0);
   }, []);
+
+  // Build broadcast stream (all agents, all rounds) -- hoisted above effects that depend on it
+  const broadcastStream = useMemo(() => {
+    const entries: StreamEntry[] = [];
+    for (const round of rounds) {
+      const bcast = round.messages?.broadcasts ?? [];
+      for (const msg of bcast) {
+        const senderAgent = Object.values(agents).find((a) => a.id === msg.sender);
+        entries.push({
+          round: round.round, type: "broadcast", agentId: msg.sender,
+          agentName: msg.sender_name, agentProvider: senderAgent?.provider ?? "",
+          content: msg.content,
+          sentAt: msg.sent_at ?? undefined,
+        });
+      }
+    }
+    for (const live of liveMessages) {
+      if (live.channel !== "broadcast") continue;
+      const senderAgent = agents[live.sender];
+      entries.push({
+        round: live.round, type: "broadcast", agentId: live.sender,
+        agentName: live.sender_name, agentProvider: senderAgent?.provider ?? "",
+        content: live.content,
+        sentAt: live.sent_at ?? undefined,
+      });
+    }
+    return entries.sort((a, b) => {
+      if (a.round !== b.round) return a.round - b.round;
+      const at = a.sentAt ? Date.parse(a.sentAt) : 0;
+      const bt = b.sentAt ? Date.parse(b.sentAt) : 0;
+      const safeAt = Number.isNaN(at) ? 0 : at;
+      const safeBt = Number.isNaN(bt) ? 0 : bt;
+      return safeAt - safeBt;
+    });
+  }, [rounds, agents, liveMessages]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -225,14 +260,13 @@ export function LiveWorkspace() {
     return source as import("@/lib/types").AgentState[];
   }, [currentRound, rounds, agents]);
 
-  const leftFamilies = useMemo(
-    () => families.slice(0, Math.ceil(families.length / 2)).map((f) => f.name),
-    [families],
-  );
-  const rightFamilies = useMemo(
-    () => families.slice(Math.ceil(families.length / 2)).map((f) => f.name),
-    [families],
-  );
+  // One family per corner of the grid: TL, BL, TR, BR
+  const cornerFamilies = useMemo(() => [
+    families[0]?.name ?? null,  // top-left
+    families[1]?.name ?? null,  // bottom-left
+    families[2]?.name ?? null,  // top-right
+    families[3]?.name ?? null,  // bottom-right
+  ], [families]);
 
   // Build flat stream for right panel (reasoning + family + dms)
   const stream = useMemo(() => {
@@ -313,6 +347,8 @@ export function LiveWorkspace() {
     }
     for (const live of liveMessages) {
       if (live.channel === "family") {
+        // Only show actual family discussion messages, not decision-phase "house" fields
+        if (live.phase && live.phase !== "family_discussion") continue;
         if (live.family !== activeFamily) continue;
         if (activeAgent && live.sender !== activeAgent.id) continue;
         const senderAgent = agents[live.sender];
@@ -348,41 +384,6 @@ export function LiveWorkspace() {
     }
     return entries;
   }, [rounds, agents, activeAgent, activeFamily, familyAgentIds, familyAgents, provider, liveMessages]);
-
-  // Build broadcast stream (all agents, all rounds)
-  const broadcastStream = useMemo(() => {
-    const entries: StreamEntry[] = [];
-    for (const round of rounds) {
-      const bcast = round.messages?.broadcasts ?? [];
-      for (const msg of bcast) {
-        const senderAgent = Object.values(agents).find((a) => a.id === msg.sender);
-        entries.push({
-          round: round.round, type: "broadcast", agentId: msg.sender,
-          agentName: msg.sender_name, agentProvider: senderAgent?.provider ?? "",
-          content: msg.content,
-          sentAt: msg.sent_at ?? undefined,
-        });
-      }
-    }
-    for (const live of liveMessages) {
-      if (live.channel !== "broadcast") continue;
-      const senderAgent = agents[live.sender];
-      entries.push({
-        round: live.round, type: "broadcast", agentId: live.sender,
-        agentName: live.sender_name, agentProvider: senderAgent?.provider ?? "",
-        content: live.content,
-        sentAt: live.sent_at ?? undefined,
-      });
-    }
-    return entries.sort((a, b) => {
-      if (a.round !== b.round) return a.round - b.round;
-      const at = a.sentAt ? Date.parse(a.sentAt) : 0;
-      const bt = b.sentAt ? Date.parse(b.sentAt) : 0;
-      const safeAt = Number.isNaN(at) ? 0 : at;
-      const safeBt = Number.isNaN(bt) ? 0 : bt;
-      return safeAt - safeBt;
-    });
-  }, [rounds, agents, liveMessages]);
 
   const filtered = showAllFamily && !selectedAgent
     ? stream.filter((e) => e.type === "family")
@@ -446,7 +447,7 @@ export function LiveWorkspace() {
 
   return (
     <div className="flex-1 min-h-0 flex">
-      {/* LEFT: Grid */}
+      {/* LEFT: Game board space */}
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="shrink-0 flex items-center justify-between px-4 h-8 border-b border-black/5">
           <span className="text-[10px] text-black/30 font-medium">
@@ -465,225 +466,237 @@ export function LiveWorkspace() {
           </label>
           <span className="text-[10px] text-black/30 font-mono"><GameTimer /></span>
         </div>
-        <div className="flex-1 min-h-0 flex">
-          {showOptimalMoves && (
-            <OptimalMovesSidePanel
-              familyNames={leftFamilies}
-              allAgents={optAgentList}
-              families={families}
-              gridSize={gridSize}
-              side="left"
-            />
-          )}
-          <div className="flex-1 min-w-0"><GameGrid /></div>
-          {showOptimalMoves && (
-            <OptimalMovesSidePanel
-              familyNames={rightFamilies}
-              allAgents={optAgentList}
-              families={families}
-              gridSize={gridSize}
-              side="right"
-            />
-          )}
-        </div>
+        {showOptimalMoves ? (
+          <div className="flex-1 min-h-0 grid grid-cols-[minmax(140px,200px)_1fr_minmax(140px,200px)] grid-rows-[1fr_1fr] gap-1 p-2">
+            {/* TL corner */}
+            <div className="self-start overflow-y-auto">
+              {cornerFamilies[0] && <OptimalMovesCornerPanel familyName={cornerFamilies[0]} allAgents={optAgentList} families={families} gridSize={gridSize} />}
+            </div>
+            {/* Grid canvas (center, spans both rows) */}
+            <div className="row-span-2 min-h-0 min-w-0"><GameGrid /></div>
+            {/* TR corner */}
+            <div className="self-start overflow-y-auto">
+              {cornerFamilies[2] && <OptimalMovesCornerPanel familyName={cornerFamilies[2]} allAgents={optAgentList} families={families} gridSize={gridSize} />}
+            </div>
+            {/* BL corner */}
+            <div className="self-end overflow-y-auto">
+              {cornerFamilies[1] && <OptimalMovesCornerPanel familyName={cornerFamilies[1]} allAgents={optAgentList} families={families} gridSize={gridSize} />}
+            </div>
+            {/* BR corner */}
+            <div className="self-end overflow-y-auto">
+              {cornerFamilies[3] && <OptimalMovesCornerPanel familyName={cornerFamilies[3]} allAgents={optAgentList} families={families} gridSize={gridSize} />}
+            </div>
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0"><GameGrid /></div>
+        )}
         <div className="h-[80px] shrink-0 border-t border-black/5"><KillTimeline /></div>
       </div>
 
-      {/* MIDDLE: Broadcast feed */}
-      <div className="w-[260px] shrink-0 flex flex-col h-full overflow-hidden border-l border-black/10">
-        <div className="shrink-0 px-4 py-2 text-[11px] font-medium text-black/60 border-b border-black/10">Broadcasts</div>
-        <div ref={bcastScrollRef} onScroll={handleBcastScroll} className="flex-1 min-h-0 overflow-y-auto relative">
-          {broadcastStream.length === 0 && (
-            <div className="text-xs text-black/25 text-center py-8">No broadcasts yet</div>
-          )}
-          {broadcastStream.map((entry, i) => (
-            <div key={`bcast-${i}`} className="px-3 py-2.5 border-b border-black/[0.04]">
-              <div className="flex items-center gap-1.5 mb-1">
-                {PROVIDER_LOGOS[entry.agentProvider] && <Image src={PROVIDER_LOGOS[entry.agentProvider]} alt="" width={12} height={12} className="object-contain" />}
-                <span className="text-[11px] font-medium text-black/70">{entry.agentName}</span>
-                <span className="text-[9px] text-black/25 ml-auto">{formatRoundTime(entry.round, entry.sentAt)}</span>
-              </div>
-              <div className="text-[11px] text-black/60 leading-[1.55] whitespace-pre-wrap">{cleanText(entry.content)}</div>
-            </div>
-          ))}
-          {!bcastIsNearBottom && bcastUnreadCount > 0 && (
-            <button
-              onClick={() => { const el = bcastScrollRef.current; if (el) el.scrollTop = el.scrollHeight; setBcastUnreadCount(0); }}
-              className="sticky bottom-2 left-1/2 -translate-x-1/2 z-20 bg-black text-white text-[10px] px-3 py-1.5 shadow-lg hover:bg-black/80 transition-colors"
-            >
-              {bcastUnreadCount} new
-            </button>
-          )}
-        </div>
-        <div className="shrink-0 border-t border-black/10 px-3 py-1.5 text-[9px] text-black/25">{broadcastStream.length} broadcasts</div>
-      </div>
+      {/* RIGHT: Run management + panels sidebar */}
+      <div className="flex-1 shrink-0 flex flex-col border-l border-black/10">
+        {/* Run management (top) */}
+        {runControls && <div className="shrink-0 border-b border-black/10">{runControls}</div>}
 
-      {/* RIGHT: Stream panel */}
-      <div className="w-[400px] shrink-0 flex flex-col h-full overflow-hidden border-l border-black/10">
-        {/* Family tabs */}
-        <div className="flex shrink-0">
-          {families.map((fam) => (
-            <button key={fam.name} onClick={() => { setSelectedFamily(fam.name); setSelectedAgent(null); setSelectedDmPartner(null); }}
-              className={`flex-1 flex items-center justify-center gap-1.5 px-1 py-2 text-[11px] font-medium border-b-2 transition-colors ${activeFamily === fam.name ? "border-black text-black" : "border-transparent text-black/35 hover:text-black/60"}`}>
-              {PROVIDER_LOGOS[fam.provider] && <Image src={PROVIDER_LOGOS[fam.provider]} alt="" width={14} height={14} className="object-contain" />}
-              {fam.name}
-            </button>
-          ))}
-        </div>
-
-        {/* Row 2: Family (All) | individual agents */}
-        <div className="flex shrink-0 bg-black/[0.02] border-b border-black/10">
-          <button onClick={() => { setSelectedAgent(null); setShowAllFamily(true); setSelectedDmPartner(null); }}
-            className={`flex-1 px-1 py-1 text-[10px] border-b-2 transition-colors ${showAllFamily && !selectedAgent ? "border-black text-black font-medium" : "border-transparent text-black/40"}`}>
-            Family (All)
-          </button>
-          {familyAgents.sort((a, b) => a.tier - b.tier).map((agent) => (
-            <button key={agent.id} onClick={() => { setSelectedAgent(agent.id); setShowAllFamily(false); setSelectedDmPartner(null); }}
-              className={`flex-1 px-1 py-1 text-[10px] border-b-2 transition-colors ${activeAgent?.id === agent.id ? "border-black text-black font-medium" : "border-transparent text-black/40"}`}>
-              {agent.name}
-              {!agent.alive && <span className="text-red-400 ml-0.5">X</span>}
-            </button>
-          ))}
-        </div>
-
-        {/* Row 3: Reasoning [Private] | DMs — only when individual agent selected */}
-        {!showAllFamily && selectedAgent && (
-          <div className="flex shrink-0 border-b border-black/10">
-            {(["reasoning", "dms"] as MsgTab[]).map((tab) => (
-              <button key={tab} onClick={() => { setMsgTab(tab); setSelectedDmPartner(null); }}
-                className={`flex-1 px-1 py-1.5 text-[10px] border-b-2 transition-colors ${msgTab === tab ? "border-black text-black font-medium" : "border-transparent text-black/35"}`}>
-                {tab === "reasoning" ? "Reasoning [Private]" : "DMs"}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Scrollable stream */}
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto relative">
-          {rounds.length === 0 && streamingEntries.length === 0 && (
-            <div className="text-xs text-black/30 text-center py-12">Waiting for game data...</div>
-          )}
-
-          {/* DM inbox view */}
-          {!showAllFamily && msgTab === "dms" && !selectedDmPartner && (
-            <div>
-              {dmInbox.length === 0 && rounds.length > 0 && (
-                <div className="text-xs text-black/25 text-center py-8">No DMs yet</div>
+        {/* Panels (side-by-side, fill remaining height) */}
+        <div className="flex-1 min-h-0 flex">
+          {/* Panel 1: Broadcast feed */}
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden border-r border-black/10">
+            <div className="shrink-0 px-3 py-2 text-[11px] font-medium text-black/60 border-b border-black/10">Broadcasts</div>
+            <div ref={bcastScrollRef} onScroll={handleBcastScroll} className="flex-1 min-h-0 overflow-y-auto relative">
+              {broadcastStream.length === 0 && (
+                <div className="text-xs text-black/25 text-center py-8">No broadcasts yet</div>
               )}
-              {dmInbox.map((thread) => {
-                const lastMsg = thread.messages[thread.messages.length - 1];
-                const threadProvider = thread.partnerProvider || findProviderByName(thread.partnerName, agents);
-                return (
-                  <button
-                    key={thread.partnerName}
-                    onClick={() => setSelectedDmPartner(thread.partnerName.toLowerCase())}
-                    className="w-full px-4 py-3 flex items-start gap-3 border-b border-black/[0.05] hover:bg-black/[0.02] transition-colors text-left"
-                  >
-                    <div className="shrink-0 mt-0.5">
-                      {PROVIDER_LOGOS[threadProvider] ? (
-                        <Image src={PROVIDER_LOGOS[threadProvider]} alt="" width={28} height={28} className="object-contain" />
-                      ) : (
-                        <div className="w-7 h-7 bg-black/10" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-0.5">
-                        <span className="text-[12px] font-semibold text-black/80">{thread.partnerName}</span>
-                        <span className="text-[9px] text-black/30">R{thread.lastRound}</span>
-                      </div>
-                      <div className="text-[11px] text-black/45 truncate leading-snug">
-                        {lastMsg?.isSent ? "You: " : ""}{cleanText(lastMsg?.content ?? "").slice(0, 80)}
-                      </div>
-                    </div>
-                    <div className="shrink-0 mt-1">
-                      <span className="text-[9px] bg-sky-300 text-white px-1.5 py-0.5 font-medium rounded-sm">{thread.messages.length}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* DM thread view */}
-          {!showAllFamily && msgTab === "dms" && selectedDmPartner && (
-            <div>
-              <button
-                onClick={() => setSelectedDmPartner(null)}
-                className="sticky top-0 z-10 w-full bg-[#f7f7f7] px-4 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5 flex items-center gap-1 hover:text-black/70"
-              >
-                &larr; Back to inbox
-              </button>
-              {filtered
-                .filter((e) => {
-                  const partnerName = e.isSent ? (e.meta ?? "").toLowerCase() : e.agentName.toLowerCase();
-                  return partnerName === selectedDmPartner;
-                })
-                .map((entry, i) => (
-                  <DmBubble key={`dm-thread-${i}`} entry={entry} activeAgent={activeAgent} agents={agents} isNew={entry.round === newRoundNum} />
-                ))
-              }
-            </div>
-          )}
-
-          {/* Standard stream view (family-all or reasoning) */}
-          {(showAllFamily || msgTab !== "dms") && byRound.map(([roundNum, entries]) => (
-            <div key={roundNum}>
-              <div className="sticky top-0 z-10 bg-[#f7f7f7] px-4 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5">
-                Round {roundNum}
-              </div>
-              <div className="divide-y divide-black/[0.04]">
-                {entries.map((entry, i) => (
-                  <EntryCard key={`${roundNum}-${entry.type}-${entry.agentId}-${i}`} entry={entry} agents={agents} isNew={roundNum === newRoundNum} />
-                ))}
-              </div>
-            </div>
-          ))}
-
-          {/* Live streaming section */}
-          {visibleStreamingEntries.length > 0 && (
-            <div>
-              <div className="sticky top-0 z-10 bg-[#f7f7f7] px-4 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 bg-black/40 animate-pulse" />
-                {streamingPhase === "deciding" ? "Reasoning..." : streamingPhase === "thinking" ? "Thinking..." : streamingPhase === "family_discussion" ? "Family Discussion..." : "Communicating..."}
-              </div>
-              <div className="divide-y divide-black/[0.04]">
-                {visibleStreamingEntries.map((se) => (
-                  <div key={se.agentId} className="px-4 py-3">
-                    <div className="flex items-center gap-1.5 mb-1.5">
-                      {PROVIDER_LOGOS[se.agentProvider] && <Image src={PROVIDER_LOGOS[se.agentProvider]} alt="" width={13} height={13} className="object-contain" />}
-                      <span className="text-xs font-medium text-black/80">{se.agentName}</span>
-                      <span className="text-[9px] px-1.5 py-0.5 border border-black/10 text-black/40">
-                        {se.phase === "deciding" ? "reasoning" : se.phase === "thinking" ? "thinking" : se.phase === "family_discussion" ? "family" : "comm"}
-                      </span>
-                    </div>
-                    {se.text ? (
-                      <div className="text-xs text-black/70 whitespace-pre-wrap leading-[1.65] pl-[18px]">
-                        <StreamingText text={se.text} agents={agents} />
-                      </div>
-                    ) : (
-                      <ThinkingShimmer agentName={se.agentName} agentModel={se.agentModel} />
-                    )}
+              {broadcastStream.map((entry, i) => (
+                <div key={`bcast-${i}`} className="px-3 py-2.5 border-b border-black/[0.04]">
+                  <div className="flex items-center gap-1.5 mb-1">
+                    {PROVIDER_LOGOS[entry.agentProvider] && <Image src={PROVIDER_LOGOS[entry.agentProvider]} alt="" width={12} height={12} className="object-contain" />}
+                    <span className="text-[11px] font-medium text-black/70 truncate">{entry.agentName}</span>
+                    <span className="text-[9px] text-black/25 ml-auto shrink-0">{formatRoundTime(entry.round, entry.sentAt)}</span>
                   </div>
+                  <div className="text-[11px] text-black/60 leading-[1.55] whitespace-pre-wrap break-words">{cleanText(entry.content)}</div>
+                </div>
+              ))}
+              {!bcastIsNearBottom && bcastUnreadCount > 0 && (
+                <button
+                  onClick={() => { const el = bcastScrollRef.current; if (el) el.scrollTop = el.scrollHeight; setBcastUnreadCount(0); }}
+                  className="sticky bottom-2 left-1/2 -translate-x-1/2 z-20 bg-black text-white text-[10px] px-3 py-1.5 shadow-lg hover:bg-black/80 transition-colors"
+                >
+                  {bcastUnreadCount} new
+                </button>
+              )}
+            </div>
+            <div className="shrink-0 border-t border-black/10 px-3 py-1.5 text-[9px] text-black/25">{broadcastStream.length} broadcasts</div>
+          </div>
+
+          {/* Panel 2: Stream panel */}
+          <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+            {/* Family tabs */}
+            <div className="flex shrink-0">
+              {families.map((fam) => (
+                <button key={fam.name} onClick={() => { setSelectedFamily(fam.name); setSelectedAgent(null); setSelectedDmPartner(null); }}
+                  className={`flex-1 flex items-center justify-center gap-1 px-1 py-2 text-[10px] font-medium border-b-2 transition-colors ${activeFamily === fam.name ? "border-black text-black" : "border-transparent text-black/35 hover:text-black/60"}`}>
+                  {PROVIDER_LOGOS[fam.provider] && <Image src={PROVIDER_LOGOS[fam.provider]} alt="" width={12} height={12} className="object-contain" />}
+                  <span className="truncate">{fam.name}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Row 2: Family (All) | individual agents */}
+            <div className="flex shrink-0 bg-black/[0.02] border-b border-black/10">
+              <button onClick={() => { setSelectedAgent(null); setShowAllFamily(true); setSelectedDmPartner(null); }}
+                className={`flex-1 px-1 py-1 text-[10px] border-b-2 transition-colors ${showAllFamily && !selectedAgent ? "border-black text-black font-medium" : "border-transparent text-black/40"}`}>
+                All
+              </button>
+              {familyAgents.sort((a, b) => a.tier - b.tier).map((agent) => (
+                <button key={agent.id} onClick={() => { setSelectedAgent(agent.id); setShowAllFamily(false); setSelectedDmPartner(null); }}
+                  className={`flex-1 px-1 py-1 text-[10px] border-b-2 transition-colors truncate ${activeAgent?.id === agent.id ? "border-black text-black font-medium" : "border-transparent text-black/40"}`}>
+                  {agent.name}
+                  {!agent.alive && <span className="text-red-400 ml-0.5">X</span>}
+                </button>
+              ))}
+            </div>
+
+            {/* Row 3: Reasoning [Private] | DMs -- only when individual agent selected */}
+            {!showAllFamily && selectedAgent && (
+              <div className="flex shrink-0 border-b border-black/10">
+                {(["reasoning", "dms"] as MsgTab[]).map((tab) => (
+                  <button key={tab} onClick={() => { setMsgTab(tab); setSelectedDmPartner(null); }}
+                    className={`flex-1 px-1 py-1.5 text-[10px] border-b-2 transition-colors ${msgTab === tab ? "border-black text-black font-medium" : "border-transparent text-black/35"}`}>
+                    {tab === "reasoning" ? "Reasoning" : "DMs"}
+                  </button>
                 ))}
               </div>
+            )}
+
+            {/* Scrollable stream */}
+            <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto relative">
+              {rounds.length === 0 && streamingEntries.length === 0 && (
+                <div className="text-xs text-black/30 text-center py-12">Waiting for game data...</div>
+              )}
+
+              {/* DM inbox view */}
+              {!showAllFamily && msgTab === "dms" && !selectedDmPartner && (
+                <div>
+                  {dmInbox.length === 0 && rounds.length > 0 && (
+                    <div className="text-xs text-black/25 text-center py-8">No DMs yet</div>
+                  )}
+                  {dmInbox.map((thread) => {
+                    const lastMsg = thread.messages[thread.messages.length - 1];
+                    const threadProvider = thread.partnerProvider || findProviderByName(thread.partnerName, agents);
+                    return (
+                      <button
+                        key={thread.partnerName}
+                        onClick={() => setSelectedDmPartner(thread.partnerName.toLowerCase())}
+                        className="w-full px-3 py-2.5 flex items-start gap-2 border-b border-black/[0.05] hover:bg-black/[0.02] transition-colors text-left"
+                      >
+                        <div className="shrink-0 mt-0.5">
+                          {PROVIDER_LOGOS[threadProvider] ? (
+                            <Image src={PROVIDER_LOGOS[threadProvider]} alt="" width={22} height={22} className="object-contain" />
+                          ) : (
+                            <div className="w-5 h-5 bg-black/10" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className="text-[11px] font-semibold text-black/80 truncate">{thread.partnerName}</span>
+                            <span className="text-[9px] text-black/30 shrink-0 ml-1">R{thread.lastRound}</span>
+                          </div>
+                          <div className="text-[10px] text-black/45 truncate leading-snug">
+                            {lastMsg?.isSent ? "You: " : ""}{cleanText(lastMsg?.content ?? "").slice(0, 60)}
+                          </div>
+                        </div>
+                        <div className="shrink-0 mt-1">
+                          <span className="text-[9px] bg-sky-300 text-white px-1.5 py-0.5 font-medium rounded-sm">{thread.messages.length}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* DM thread view */}
+              {!showAllFamily && msgTab === "dms" && selectedDmPartner && (
+                <div>
+                  <button
+                    onClick={() => setSelectedDmPartner(null)}
+                    className="sticky top-0 z-10 w-full bg-[#f7f7f7] px-3 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5 flex items-center gap-1 hover:text-black/70"
+                  >
+                    &larr; Back to inbox
+                  </button>
+                  {filtered
+                    .filter((e) => {
+                      const partnerName = e.isSent ? (e.meta ?? "").toLowerCase() : e.agentName.toLowerCase();
+                      return partnerName === selectedDmPartner;
+                    })
+                    .map((entry, i) => (
+                      <DmBubble key={`dm-thread-${i}`} entry={entry} activeAgent={activeAgent} agents={agents} isNew={entry.round === newRoundNum} />
+                    ))
+                  }
+                </div>
+              )}
+
+              {/* Standard stream view (family-all or reasoning) */}
+              {(showAllFamily || msgTab !== "dms") && byRound.map(([roundNum, entries]) => (
+                <div key={roundNum}>
+                  <div className="sticky top-0 z-10 bg-[#f7f7f7] px-3 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5">
+                    Round {roundNum}
+                  </div>
+                  <div className="divide-y divide-black/[0.04]">
+                    {entries.map((entry, i) => (
+                      <EntryCard key={`${roundNum}-${entry.type}-${entry.agentId}-${i}`} entry={entry} agents={agents} isNew={roundNum === newRoundNum} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              {/* Live streaming section */}
+              {visibleStreamingEntries.length > 0 && (
+                <div>
+                  <div className="sticky top-0 z-10 bg-[#f7f7f7] px-3 py-1.5 text-[10px] font-medium text-black/50 border-b border-black/5 flex items-center gap-2">
+                    <span className="w-1.5 h-1.5 bg-black/40 animate-pulse" />
+                    {streamingPhase === "deciding" ? "Reasoning..." : streamingPhase === "thinking" ? "Thinking..." : streamingPhase === "family_discussion" ? "Family Discussion..." : "Communicating..."}
+                  </div>
+                  <div className="divide-y divide-black/[0.04]">
+                    {visibleStreamingEntries.map((se) => (
+                      <div key={se.agentId} className="px-3 py-2.5">
+                        <div className="flex items-center gap-1.5 mb-1.5">
+                          {PROVIDER_LOGOS[se.agentProvider] && <Image src={PROVIDER_LOGOS[se.agentProvider]} alt="" width={13} height={13} className="object-contain" />}
+                          <span className="text-xs font-medium text-black/80 truncate">{se.agentName}</span>
+                          <span className="text-[9px] px-1.5 py-0.5 border border-black/10 text-black/40 shrink-0">
+                            {se.phase === "deciding" ? "reasoning" : se.phase === "thinking" ? "thinking" : se.phase === "family_discussion" ? "family" : "comm"}
+                          </span>
+                        </div>
+                        {se.text ? (
+                          <div className="text-xs text-black/70 whitespace-pre-wrap leading-[1.65] pl-[18px] break-words">
+                            <StreamingText text={se.text} agents={agents} />
+                          </div>
+                        ) : (
+                          <ThinkingShimmer agentName={se.agentName} agentModel={se.agentModel} />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Unread messages pill */}
+              {!isNearBottom && unreadCount > 0 && (
+                <button
+                  onClick={() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; setUnreadCount(0); }}
+                  className="sticky bottom-2 left-1/2 -translate-x-1/2 z-20 bg-black text-white text-[10px] px-3 py-1.5 shadow-lg hover:bg-black/80 transition-colors"
+                >
+                  {unreadCount} new
+                </button>
+              )}
             </div>
-          )}
 
-          {/* Unread messages pill */}
-          {!isNearBottom && unreadCount > 0 && (
-            <button
-              onClick={() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; setUnreadCount(0); }}
-              className="sticky bottom-2 left-1/2 -translate-x-1/2 z-20 bg-black text-white text-[10px] px-3 py-1.5 shadow-lg hover:bg-black/80 transition-colors"
-            >
-              {unreadCount} new {unreadCount === 1 ? "message" : "messages"} below
-            </button>
-          )}
-        </div>
-
-        {/* Footer */}
-        <div className="shrink-0 border-t border-black/10 px-4 py-1.5 text-[10px] text-black/30 flex justify-between">
-          <span>{rounds.length} rounds{streamingPhase && ` | ${streamingPhase}`}</span>
-          <span>{Object.values(agents).filter((a) => a.alive).length}/{Object.values(agents).length} alive</span>
+            {/* Footer */}
+            <div className="shrink-0 border-t border-black/10 px-3 py-1.5 text-[9px] text-black/30 flex justify-between">
+              <span>{rounds.length} rds{streamingPhase && ` | ${streamingPhase}`}</span>
+              <span>{Object.values(agents).filter((a) => a.alive).length}/{Object.values(agents).length}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>

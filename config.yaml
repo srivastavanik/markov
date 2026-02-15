@@ -1,6 +1,8 @@
 grid_size: 7
 max_rounds: 60
 stalemate_threshold: 15
+shrink_interval: 5      # grid contracts every N rounds
+min_grid_size: 3         # smallest the grid can shrink to
 discussion_rounds: 2
 discussion_timeout_s: 25
 decision_timeout_s: 45

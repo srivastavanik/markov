@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from darwin.api.game_runner import GameRunner
@@ -20,6 +22,8 @@ from darwin.server import GameBroadcaster
 
 WS_HOST = os.getenv("MARKOV_WS_HOST", "0.0.0.0")
 WS_PORT = int(os.getenv("MARKOV_WS_PORT", "8765"))
+# When MARKOV_SINGLE_PORT is set, WS is served on the same port via /ws endpoint
+_SINGLE_PORT = os.getenv("MARKOV_SINGLE_PORT", "").lower() in ("1", "true", "yes")
 WS_PUBLIC_URL = os.getenv("MARKOV_WS_PUBLIC_URL", f"ws://localhost:{WS_PORT}")
 
 broadcaster: GameBroadcaster | None = None
@@ -30,12 +34,15 @@ runner: GameRunner | None = None
 async def lifespan(_app: FastAPI):
     global broadcaster, runner
     broadcaster = GameBroadcaster(host=WS_HOST, port=WS_PORT)
-    await broadcaster.start()
+    if not _SINGLE_PORT:
+        # Standalone WS server on separate port (local dev)
+        await broadcaster.start()
+    # In single-port mode, WS is handled by the /ws FastAPI endpoint below
     runner = GameRunner(broadcaster=broadcaster)
     try:
         yield
     finally:
-        if broadcaster:
+        if broadcaster and not _SINGLE_PORT:
             await broadcaster.stop()
 
 
@@ -150,4 +157,86 @@ async def get_series(series_id: str) -> SeriesDetail:
     if row is None:
         raise HTTPException(status_code=404, detail="Series not found")
     return SeriesDetail(**row)
+
+
+# ---------------------------------------------------------------------------
+# WebSocket endpoint (single-port mode for cloud deployment)
+# ---------------------------------------------------------------------------
+
+@app.websocket("/ws")
+@app.websocket("/ws/{game_id}")
+async def websocket_endpoint(websocket: WebSocket, game_id: str | None = None) -> None:
+    """Bridge FastAPI WebSocket to the GameBroadcaster.
+
+    When MARKOV_SINGLE_PORT=1, the standalone websockets server is disabled
+    and this endpoint serves WS on the same port as the REST API.
+    Works in both modes so local dev can also use /ws if desired.
+    """
+    if not broadcaster:
+        await websocket.close(code=1011, reason="Broadcaster not ready")
+        return
+
+    # Token check
+    token = websocket.query_params.get("token")
+    if broadcaster.token and token != broadcaster.token:
+        await websocket.close(code=4401, reason="Unauthorized")
+        return
+
+    await websocket.accept()
+
+    # Register as a pseudo-client on the broadcaster
+    # We use a lightweight shim so the broadcaster can send to this client
+    queue: asyncio.Queue[str] = asyncio.Queue(maxsize=256)
+
+    class _FastAPIClient:
+        """Duck-type shim for websockets.ServerConnection used by broadcaster."""
+        def __hash__(self) -> int:
+            return id(self)
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+    shim = _FastAPIClient()
+    broadcaster.clients.add(shim)  # type: ignore[arg-type]
+    broadcaster.client_game_ids[shim] = game_id  # type: ignore[index]
+
+    # Monkey-patch _safe_send to route messages to our queue
+    _orig_safe_send = broadcaster._safe_send
+
+    async def _patched_safe_send(client: object, payload: str) -> None:
+        if client is shim:
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                pass  # drop if client is too slow
+        else:
+            await _orig_safe_send(client, payload)  # type: ignore[arg-type]
+
+    broadcaster._safe_send = _patched_safe_send  # type: ignore[assignment]
+
+    try:
+        # Replay cached state for late joiners
+        init_payload = broadcaster._last_init.get(game_id) or broadcaster._last_init.get(None)
+        if init_payload:
+            await websocket.send_text(json.dumps(init_payload, default=str))
+        for rp in broadcaster._last_rounds.get(game_id) or broadcaster._last_rounds.get(None) or []:
+            await websocket.send_text(json.dumps(rp, default=str))
+
+        # Two concurrent tasks: forward broadcasts to client, and read (ignore) from client
+        async def _sender() -> None:
+            while True:
+                payload = await queue.get()
+                await websocket.send_text(payload)
+
+        async def _receiver() -> None:
+            while True:
+                await websocket.receive_text()  # dashboard is read-only; ignore
+
+        await asyncio.gather(_sender(), _receiver())
+
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        broadcaster._safe_send = _orig_safe_send  # type: ignore[assignment]
+        broadcaster.clients.discard(shim)  # type: ignore[arg-type]
+        broadcaster.client_game_ids.pop(shim, None)  # type: ignore[arg-type]
 

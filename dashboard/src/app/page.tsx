@@ -46,16 +46,19 @@ export default function DashboardPage() {
         games={games}
         onSelectGame={setActiveGameId}
       />
-      <RunControls
-        activeGameId={activeGameId}
-        games={games}
-        loading={loading}
-        error={error}
-        onRefresh={refreshGames}
-        onStart={handleStart}
-        onCancel={handleCancel}
+      <LiveWorkspace
+        runControls={
+          <RunControls
+            activeGameId={activeGameId}
+            games={games}
+            loading={loading}
+            error={error}
+            onRefresh={refreshGames}
+            onStart={handleStart}
+            onCancel={handleCancel}
+          />
+        }
       />
-      <LiveWorkspace />
     </div>
   );
 }

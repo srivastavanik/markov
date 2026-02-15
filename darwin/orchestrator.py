@@ -211,20 +211,48 @@ async def run_round_llm(
         agent.rounds_survived += 1
 
     # ---------------------------------------------------------------
-    # Dynamic grid shrink: once ≤4 alive, shrink by 1 per round (min 3x3)
+    # Grid contraction: scheduled every shrink_interval rounds, or
+    # emergency shrink when ≤4 alive on an oversized grid.
+    # Agents on the removed edge are pushed inward (never random).
     # ---------------------------------------------------------------
     grid_shrink_notice = ""
-    if state.living_count <= 4 and state.grid.size > 3:
-        new_size = state.grid.size - 1
-        living_ids = [a.id for a in state.living_agents]
-        state.grid.shrink(new_size, living_ids)
-        for agent in state.living_agents:
-            agent.position = state.grid.get_agent_position(agent.id)
-        grid_shrink_notice = f"The grid has contracted to {new_size}\u00d7{new_size}. All positions have been reassigned randomly."
+    min_grid = state.config.min_grid_size
+    shrink_interval = state.config.shrink_interval
+
+    should_shrink = False
+    if state.grid.size > min_grid:
+        if shrink_interval > 0 and state.round_num % shrink_interval == 0:
+            should_shrink = True
+        elif state.living_count <= 4:
+            should_shrink = True
+
+    if should_shrink:
+        new_size = max(state.grid.size - 1, min_grid)
+        moves = state.grid.shrink(new_size)
+        for agent_id, (_old, new_pos) in moves.items():
+            state.agents[agent_id].position = new_pos
+        if moves:
+            displaced_names = [state.agents[aid].name for aid in moves]
+            grid_shrink_notice = (
+                f"The grid has contracted to {new_size}\u00d7{new_size}. "
+                f"Agents pushed inward from the edge: {', '.join(displaced_names)}."
+            )
+        else:
+            grid_shrink_notice = f"The grid has contracted to {new_size}\u00d7{new_size}. No agents were displaced."
         if verbose:
             print(f"  ** Grid shrunk to {new_size}x{new_size} **")
         if broadcaster:
             await broadcaster.broadcast_grid_shrink(game_id, state.round_num, new_size)
+
+    # Pre-shrink warning: tell agents the grid will contract next round
+    if state.grid.size > min_grid and shrink_interval > 0:
+        if (state.round_num + 1) % shrink_interval == 0:
+            next_size = state.grid.size - 1
+            border = state.grid.size - 1
+            grid_shrink_notice += (
+                f"\nWARNING: The grid will contract to {next_size}\u00d7{next_size} next round. "
+                f"Row {border} and column {border} will be removed. Move inward to avoid displacement."
+            )
 
     living = state.living_agents
     valid_agent_names = [a.name for a in living]
@@ -329,7 +357,7 @@ async def run_round_llm(
         # Broadcast per-agent communication completion
         if broadcaster and messages:
             for msg in messages:
-                await broadcaster.broadcast_message(msg, game_id=game_id)
+                await broadcaster.broadcast_message(msg, game_id=game_id, phase="deciding")
                 await broadcaster.broadcast_token_delta(
                     game_id, state.round_num, "deciding",
                     agent.id, agent.name, msg.content,
@@ -494,7 +522,11 @@ async def run_game_llm(
     # Build system prompts once
     system_prompts: dict[str, str] = {}
     for agent in state.agents.values():
-        system_prompts[agent.id] = build_system_prompt(agent, state.families, state.agents, grid_size=config.grid_size)
+        system_prompts[agent.id] = build_system_prompt(
+            agent, state.families, state.agents,
+            grid_size=config.grid_size,
+            shrink_interval=config.shrink_interval,
+        )
 
     # Multi-turn conversation history per agent (last 8 rounds)
     conversation_histories: dict[str, list[dict]] = {}
@@ -692,7 +724,7 @@ async def _run_family_discussion(
             # Store as family channel message
             comms.add_messages([message])
             if broadcaster:
-                await broadcaster.broadcast_message(message, game_id=game_id)
+                await broadcaster.broadcast_message(message, game_id=game_id, phase="family_discussion")
 
     return {"family": family.name, "transcript": transcript}
 
@@ -884,7 +916,7 @@ async def _run_dm_reply_phase(
     if broadcaster:
         for msg in reply_messages:
             agent = state.agents[msg.sender]
-            await broadcaster.broadcast_message(msg, game_id=game_id)
+            await broadcaster.broadcast_message(msg, game_id=game_id, phase="dm_replies")
             await broadcaster.broadcast_token_delta(
                 game_id, state.round_num, "dm_replies",
                 agent.id, agent.name, msg.content,
