@@ -35,6 +35,11 @@ interface GameStore {
   gameJson: unknown | null; // raw game data for export
   activeGameId: string | null;
 
+  // Streaming state
+  streamingPhase: string | null;
+  streamingRound: number;
+  streamingTokens: Record<string, string>; // agent_id -> accumulated text
+
   // Actions
   initGame: (data: GameInitData) => void;
   pushRound: (data: RoundData) => void;
@@ -57,6 +62,9 @@ interface GameStore {
   setShowGhostOutlines: (on: boolean) => void;
   setGameJson: (data: unknown) => void;
   setActiveGameId: (id: string | null) => void;
+  setStreamingPhase: (phase: string | null, round?: number) => void;
+  appendToken: (agentId: string, delta: string) => void;
+  clearStreaming: () => void;
   reset: () => void;
 }
 
@@ -82,6 +90,9 @@ export const useGameState = create<GameStore>((set, get) => ({
   viewMode: "board",
   showAdjacencyLines: true,
   showGhostOutlines: true,
+  streamingPhase: null,
+  streamingRound: 0,
+  streamingTokens: {},
   gameJson: null,
   activeGameId: null,
 
@@ -164,6 +175,14 @@ export const useGameState = create<GameStore>((set, get) => ({
   setShowGhostOutlines: (on) => set({ showGhostOutlines: on }),
   setGameJson: (data) => set({ gameJson: data }),
   setActiveGameId: (id) => set({ activeGameId: id }),
+  setStreamingPhase: (phase, round) => set({ streamingPhase: phase, streamingRound: round ?? get().streamingRound }),
+  appendToken: (agentId, delta) => set((s) => ({
+    streamingTokens: {
+      ...s.streamingTokens,
+      [agentId]: (s.streamingTokens[agentId] || "") + delta,
+    },
+  })),
+  clearStreaming: () => set({ streamingPhase: null, streamingTokens: {}, streamingRound: 0 }),
   reset: () =>
     set({
       rounds: [],
@@ -187,5 +206,8 @@ export const useGameState = create<GameStore>((set, get) => ({
       showGhostOutlines: true,
       gameJson: null,
       activeGameId: null,
+      streamingPhase: null,
+      streamingRound: 0,
+      streamingTokens: {},
     }),
 }));

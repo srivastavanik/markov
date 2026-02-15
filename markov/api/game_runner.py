@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +13,8 @@ from uuid import uuid4
 from markov.config import GameConfig, load_game_config
 from markov.orchestrator import run_game_llm
 from markov.server import GameBroadcaster
+
+logger = logging.getLogger("markov.game_runner")
 
 GameMode = Literal["full", "quick"]
 GameStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
@@ -59,8 +63,19 @@ class GameRunner:
         game_id = f"game_{uuid4().hex[:12]}"
         job = GameJob(game_id=game_id, mode=mode)
         self.jobs[game_id] = job
-        job.task = asyncio.create_task(self._run_job(job, verbose=verbose))
+        task = asyncio.create_task(self._run_job(job, verbose=verbose), name=f"game-{game_id}")
+        task.add_done_callback(self._on_task_done)
+        job.task = task
         return job
+
+    @staticmethod
+    def _on_task_done(task: asyncio.Task) -> None:
+        """Log unhandled exceptions from background game tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.error("Background game task %s raised: %s", task.get_name(), exc, exc_info=exc)
 
     def request_cancel(self, game_id: str) -> GameJob | None:
         job = self.jobs.get(game_id)
@@ -215,6 +230,7 @@ class GameRunner:
     async def _run_job(self, job: GameJob, verbose: bool) -> None:
         job.status = "running"
         config = self._build_config(job.mode)
+        logger.info("[%s] Game starting (mode=%s)", job.game_id, job.mode)
         try:
             state, game_logger = await run_game_llm(
                 config=config,
@@ -229,9 +245,18 @@ class GameRunner:
             job.total_rounds = state.round_num
             job.winner = state.winner.name if state.winner else None
             job.status = "cancelled" if job.cancel_requested else "completed"
+            logger.info("[%s] Game finished: status=%s winner=%s rounds=%s",
+                        job.game_id, job.status, job.winner, job.total_rounds)
         except Exception as exc:
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
+            logger.error(
+                "[%s] GAME FAILED: %s: %s\n%s",
+                job.game_id,
+                type(exc).__name__,
+                exc,
+                traceback.format_exc(),
+            )
         finally:
             job.ended_at = datetime.now(timezone.utc)
 

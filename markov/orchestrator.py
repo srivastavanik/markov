@@ -21,7 +21,7 @@ from markov.communication import (
 from markov.config import GameConfig, load_game_config
 from markov.family import Family
 from markov.grid import Grid
-from markov.llm import LLMResponse, call_llm, get_cost_summary, reset_costs
+from markov.llm import LLMResponse, call_llm, call_llm_stream, get_cost_summary, reset_costs
 from markov.logger import GameLogger
 from markov.prompts import (
     build_action_prompt,
@@ -266,20 +266,29 @@ async def run_round_llm(
     # Phase 2: COMMUNICATE
     # ---------------------------------------------------------------
     # 2a: Family discussions (parallel across families, sequential within)
-    # Skipped when no_family_discussion is set (Series D: no family channel)
     family_discussions: list[dict] = []
 
     if not state.config.no_family_discussion:
         living_families = [f for f in state.families if not f.is_eliminated(state.agents)]
+        if broadcaster:
+            await broadcaster.broadcast_phase_start(game_id, state.round_num, "family_discussion",
+                [aid for f in living_families for aid in f.agent_ids if state.agents.get(aid, Agent(id="",name="",family="",provider="",model="",tier=1,temperature=0)).alive])
         family_results = await asyncio.gather(*[
             _run_family_discussion(
                 family, state, perceptions, system_prompts, comms,
+                broadcaster=broadcaster, game_id=game_id,
             )
             for family in living_families
-        ])
-        for result in family_results:
+        ], return_exceptions=True)
+        for i, result in enumerate(family_results):
+            if isinstance(result, BaseException):
+                logger.error("Family discussion crashed for %s: %s",
+                             living_families[i].name, result, exc_info=result)
+                continue
             if result is not None:
                 family_discussions.append(result)
+        if broadcaster:
+            await broadcaster.broadcast_phase_complete(game_id, state.round_num, "family_discussion")
 
     # 2b: Individual communications (parallel across agents)
     def _family_names(agent: Agent) -> str:
@@ -288,6 +297,10 @@ async def run_round_llm(
                 members = [state.agents[aid] for aid in fam.agent_ids if state.agents[aid].alive and aid != agent.id]
                 return ", ".join(m.name for m in members) if members else "no one"
         return "no one"
+
+    if broadcaster:
+        await broadcaster.broadcast_phase_start(game_id, state.round_num, "communication",
+            [a.id for a in living])
 
     comm_tasks = [
         _get_agent_communications(agent, perceptions[agent.id], system_prompts[agent.id], living_family_members=_family_names(agent))
@@ -304,7 +317,7 @@ async def run_round_llm(
                 state.round_num, valid_agent_names,
             )
         except Exception as e:
-            logger.warning("Communication parse failed for %s: %s (raw: %s)", agent.name, e, raw_comm[:200])
+            logger.error("Communication parse failed for %s: %s (raw: %s)", agent.name, e, raw_comm[:200])
             parsed = []
             comm_parse_info = {"method": "parse_error", "raw_truncated": raw_comm[:300]}
         round_messages.extend(parsed)
@@ -314,19 +327,34 @@ async def run_round_llm(
             "parsed": [m.to_dict() for m in parsed],
             "parse_method": comm_parse_info["method"],
         })
+        # Broadcast per-agent communication completion
+        if broadcaster and parsed:
+            for msg in parsed:
+                await broadcaster.broadcast_token_delta(
+                    game_id, state.round_num, "communication",
+                    agent.id, agent.name, msg.content,
+                )
 
     comms.add_messages(round_messages)
+
+    if broadcaster:
+        await broadcaster.broadcast_phase_complete(game_id, state.round_num, "communication")
 
     if verbose:
         _print_communications(state, round_messages)
 
     # ---------------------------------------------------------------
-    # Phase 3: THINK -- the core dataset
+    # Phase 3: THINK -- the core dataset (streamed live)
     # ---------------------------------------------------------------
+    if broadcaster:
+        await broadcaster.broadcast_phase_start(game_id, state.round_num, "thinking",
+            [a.id for a in living])
+
     thought_tasks = [
         _get_inner_thoughts(
             agent, perceptions[agent.id], system_prompts[agent.id],
             comms, state.round_num,
+            broadcaster=broadcaster, game_id=game_id,
         )
         for agent in living
     ]
@@ -339,6 +367,9 @@ async def run_round_llm(
             "round": state.round_num,
             "thought": thought_text,
         })
+
+    if broadcaster:
+        await broadcaster.broadcast_phase_complete(game_id, state.round_num, "thinking")
 
     if verbose:
         _print_thoughts(state, thoughts)
@@ -577,8 +608,10 @@ async def _run_family_discussion(
     perceptions: dict[str, str],
     system_prompts: dict[str, str],
     comms: CommunicationManager,
+    broadcaster: GameBroadcaster | None = None,
+    game_id: str | None = None,
 ) -> dict | None:
-    """Multi-turn family discussion. Sequential within, called in parallel across families."""
+    """Multi-turn family discussion. Sequential within, called in parallel across families. Streams tokens."""
     members = family.living_members(state.agents)
     if len(members) <= 1:
         return None
@@ -591,17 +624,20 @@ async def _run_family_discussion(
             prompt = build_discussion_prompt(agent, perception, transcript, disc_round)
 
             try:
-                response = await call_llm(
+                content = await call_llm_stream(
                     model=agent.model,
                     system_prompt=system_prompts[agent.id],
                     user_prompt=prompt,
                     temperature=agent.temperature,
                     max_tokens=512,
                     provider=agent.provider,
+                    on_token=lambda delta, _aid=agent.id, _aname=agent.name: asyncio.get_event_loop().create_task(
+                        broadcaster.broadcast_token_delta(game_id, state.round_num, "family_discussion", _aid, _aname, delta)
+                    ) if broadcaster else None,
                 )
-                content = response.text
             except Exception as e:
-                logger.warning("Family discussion LLM call failed for %s: %s", agent.name, e)
+                logger.error("Family discussion LLM call failed for %s (model=%s provider=%s): %s",
+                             agent.name, agent.model, agent.provider, e, exc_info=True)
                 content = "[Discussion contribution failed]"
 
             entry = {
@@ -619,7 +655,7 @@ async def _run_family_discussion(
                 sender=agent.id,
                 sender_name=agent.name,
                 channel="family",
-                content=response.text,
+                content=content,
                 family=family.name,
             )])
 
@@ -647,7 +683,8 @@ async def _get_agent_communications(
         )
         return response.text
     except Exception as e:
-        logger.warning("Communication LLM call failed for %s: %s", agent.name, e)
+        logger.error("Communication LLM call failed for %s (model=%s provider=%s): %s",
+                     agent.name, agent.model, agent.provider, e, exc_info=True)
         return '{"house":null,"direct_messages":[],"broadcast":null}'
 
 
@@ -657,24 +694,30 @@ async def _get_inner_thoughts(
     system_prompt: str,
     comms: CommunicationManager,
     round_num: int,
+    broadcaster: GameBroadcaster | None = None,
+    game_id: str | None = None,
 ) -> str:
-    """Get inner thoughts from an agent. THE CORE DATA."""
+    """Get inner thoughts from an agent. THE CORE DATA. Streams tokens live."""
     messages_this_round = comms.get_this_round_messages(
         agent.id, agent.name, agent.family, round_num,
     )
     prompt = build_thought_prompt(perception, messages_this_round)
     try:
-        response = await call_llm(
+        text = await call_llm_stream(
             model=agent.model,
             system_prompt=system_prompt,
             user_prompt=prompt,
             temperature=agent.temperature,
             max_tokens=768,
             provider=agent.provider,
+            on_token=lambda delta, _aid=agent.id, _aname=agent.name: asyncio.get_event_loop().create_task(
+                broadcaster.broadcast_token_delta(game_id, round_num, "thinking", _aid, _aname, delta)
+            ) if broadcaster else None,
         )
-        return response.text
+        return text
     except Exception as e:
-        logger.warning("Thought LLM call failed for %s: %s", agent.name, e)
+        logger.error("Thought LLM call failed for %s (model=%s provider=%s): %s",
+                     agent.name, agent.model, agent.provider, e, exc_info=True)
         return f"[Thought generation failed: {e}]"
 
 
@@ -695,21 +738,22 @@ async def _get_agent_action(
             system_prompt=system_prompt,
             user_prompt=prompt,
             temperature=agent.temperature,
-            max_tokens=256,
+            max_tokens=512,
             provider=agent.provider,
             enforce_json=True,
             json_schema=ACTION_JSON_SCHEMA,
         )
         raw_text = response.text
     except Exception as e:
-        logger.warning("Action LLM call failed for %s: %s", agent.name, e)
+        logger.error("Action LLM call failed for %s (model=%s provider=%s): %s",
+                     agent.name, agent.model, agent.provider, e, exc_info=True)
         raw_text = ""
         return raw_text, Action(agent_id=agent.id, type=ActionType.STAY), {"method": "llm_error", "reasoning": str(e)}
 
     try:
         action, action_parse_info = parse_action(raw_text, agent.id, valid_targets)
     except Exception as e:
-        logger.warning("Action parse failed for %s: %s (raw: %s)", agent.name, e, raw_text[:200])
+        logger.error("Action parse failed for %s: %s (raw: %s)", agent.name, e, raw_text[:200])
         action = Action(agent_id=agent.id, type=ActionType.STAY)
         action_parse_info = {"method": "parse_error_default_stay", "reasoning": f"Parse failed: {e}"}
 

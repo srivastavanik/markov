@@ -136,8 +136,9 @@ Speak openly -- everyone hears.
 
 Say nothing.
 
-Be specific. Use names. If you received messages, respond to them.
-Vague pleasantries waste your limited window.
+Be specific. Reference others with @Name when addressing them directly.
+If you received messages, respond to them. Vague pleasantries waste
+your limited window.
 
 Keep each message under 2-3 sentences. You have limited bandwidth.
 

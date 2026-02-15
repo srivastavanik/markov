@@ -128,6 +128,57 @@ class GameBroadcaster:
             self.clients.discard(client)
 
     # ------------------------------------------------------------------
+    # Streaming event broadcasting
+    # ------------------------------------------------------------------
+
+    async def broadcast_phase_start(
+        self,
+        game_id: str | None,
+        round_num: int,
+        phase: str,
+        agent_ids: list[str] | None = None,
+    ) -> None:
+        await self.broadcast({
+            "type": "phase_start",
+            "game_id": game_id,
+            "round": round_num,
+            "phase": phase,
+            "agent_ids": agent_ids or [],
+        }, game_id=game_id)
+
+    async def broadcast_token_delta(
+        self,
+        game_id: str | None,
+        round_num: int,
+        phase: str,
+        agent_id: str,
+        agent_name: str,
+        text_delta: str,
+    ) -> None:
+        await self.broadcast({
+            "type": "token_delta",
+            "game_id": game_id,
+            "round": round_num,
+            "phase": phase,
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "delta": text_delta,
+        }, game_id=game_id)
+
+    async def broadcast_phase_complete(
+        self,
+        game_id: str | None,
+        round_num: int,
+        phase: str,
+    ) -> None:
+        await self.broadcast({
+            "type": "phase_complete",
+            "game_id": game_id,
+            "round": round_num,
+            "phase": phase,
+        }, game_id=game_id)
+
+    # ------------------------------------------------------------------
     # Game event broadcasting
     # ------------------------------------------------------------------
 

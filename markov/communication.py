@@ -264,8 +264,9 @@ def _messages_from_parsed(
 
 
 def _resolve_agent_name(name: str, valid_names_lower: dict[str, str]) -> str | None:
-    """Resolve a potentially misspelled agent name. Case-insensitive, partial match."""
-    low = name.strip().lower()
+    """Resolve a potentially misspelled agent name. Case-insensitive, partial match.
+    Strips leading '@' so Discord-style mentions like '@Opus' resolve correctly."""
+    low = name.strip().lstrip("@").lower()
     # Exact match
     if low in valid_names_lower:
         return valid_names_lower[low]

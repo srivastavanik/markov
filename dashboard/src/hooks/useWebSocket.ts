@@ -28,7 +28,7 @@ export function useWebSocket({
   const queuedRounds = useRef<RoundData[]>([]);
   const rafRef = useRef<number | null>(null);
   const [status, setStatus] = useState<WebSocketStatus>("idle");
-  const { initGame, pushRound, setGameOver } = useGameState();
+  const { initGame, pushRound, setGameOver, setStreamingPhase, appendToken, clearStreaming } = useGameState();
 
   const wsUrl = (() => {
     const base = wsBaseUrl.replace(/\/+$/, "");
@@ -94,6 +94,7 @@ export function useWebSocket({
           if (data.type === "game_init") {
             initGame(data as GameInitData);
           } else if (data.type === "round_update") {
+            clearStreaming();
             queuedRounds.current.push(data as RoundData);
             if (rafRef.current === null) {
               rafRef.current = requestAnimationFrame(() => {
@@ -106,8 +107,15 @@ export function useWebSocket({
               });
             }
           } else if (data.type === "game_over") {
+            clearStreaming();
             const go = data as GameOverData;
             setGameOver(go.winner, go.final_reflection);
+          } else if (data.type === "phase_start") {
+            setStreamingPhase(data.phase, data.round);
+          } else if (data.type === "token_delta") {
+            appendToken(data.agent_id, data.delta);
+          } else if (data.type === "phase_complete") {
+            // Phase done; streaming tokens stay visible until round_update clears them
           }
         } catch (e) {
           console.error("[WS] Parse error:", e);
@@ -134,7 +142,7 @@ export function useWebSocket({
       // WebSocket constructor can throw on invalid URL
       setStatus("disconnected");
     }
-  }, [enabled, wsUrl, gameId, initGame, pushRound, setGameOver, cleanup]);
+  }, [enabled, wsUrl, gameId, initGame, pushRound, setGameOver, setStreamingPhase, appendToken, clearStreaming, cleanup]);
 
   useEffect(() => {
     if (!enabled) {
