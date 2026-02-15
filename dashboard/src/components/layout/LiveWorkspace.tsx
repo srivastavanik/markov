@@ -97,6 +97,16 @@ function StreamingText({ text, agents }: { text: string; agents: Record<string, 
   );
 }
 
+function ThinkingShimmer({ agentName, agentModel }: { agentName: string; agentModel: string }) {
+  const modelLabel = agentModel || agentName;
+  return (
+    <div className="flex items-center gap-2 pl-[18px]">
+      <div className="h-3 flex-1 max-w-[180px] animate-shimmer" />
+      <span className="text-[10px] text-black/30 italic whitespace-nowrap">{modelLabel} is thinking...</span>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main component
 // ---------------------------------------------------------------------------
@@ -236,20 +246,21 @@ export function LiveWorkspace() {
     return Array.from(map.entries()).sort((a, b) => a[0] - b[0]);
   }, [filtered]);
 
-  // Build streaming entries for display
+  // Build streaming entries — show all relevant living agents during phase
   const streamingEntries = useMemo(() => {
     if (!streamingPhase) return [];
-    const entries: { agentId: string; agentName: string; agentProvider: string; text: string; phase: string }[] = [];
-    for (const [agentId, text] of Object.entries(streamingTokens)) {
-      if (!text) continue;
-      const agent = agents[agentId];
-      if (!agent) continue;
-      if (activeAgent && agent.id !== activeAgent.id) continue;
-      if (!activeAgent && !familyAgentIds.has(agent.id)) continue;
-      entries.push({ agentId, agentName: agent.name, agentProvider: agent.provider, text, phase: streamingPhase });
-    }
-    return entries;
-  }, [streamingPhase, streamingTokens, agents, activeAgent, familyAgentIds]);
+    const relevantAgents = activeAgent
+      ? [activeAgent].filter((a) => a.alive)
+      : familyAgents.filter((a) => a.alive);
+    return relevantAgents.map((agent) => ({
+      agentId: agent.id,
+      agentName: agent.name,
+      agentProvider: agent.provider,
+      agentModel: agent.model,
+      text: streamingTokens[agent.id] || "",
+      phase: streamingPhase,
+    }));
+  }, [streamingPhase, streamingTokens, activeAgent, familyAgents]);
 
   return (
     <div className="flex-1 min-h-0 flex">
@@ -338,9 +349,13 @@ export function LiveWorkspace() {
                         {se.phase === "deciding" ? "reasoning" : se.phase === "thinking" ? "thinking" : se.phase === "family_discussion" ? "family" : "comm"}
                       </span>
                     </div>
-                    <div className="text-xs text-black/70 whitespace-pre-wrap leading-[1.65] pl-[18px]">
-                      <StreamingText text={se.text} agents={agents} />
-                    </div>
+                    {se.text ? (
+                      <div className="text-xs text-black/70 whitespace-pre-wrap leading-[1.65] pl-[18px]">
+                        <StreamingText text={se.text} agents={agents} />
+                      </div>
+                    ) : (
+                      <ThinkingShimmer agentName={se.agentName} agentModel={se.agentModel} />
+                    )}
                   </div>
                 ))}
               </div>
