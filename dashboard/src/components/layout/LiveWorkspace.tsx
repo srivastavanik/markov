@@ -4,6 +4,7 @@ import { useState, useMemo, useRef, useEffect, useCallback, type ReactNode } fro
 import Image from "next/image";
 import { GameGrid } from "@/components/GameGrid";
 import { KillTimeline } from "@/components/KillTimeline";
+import { OptimalMovesSidePanel } from "@/components/OptimalMovesPanel";
 import { useGameState } from "@/hooks/useGameState";
 import type { AgentState } from "@/lib/types";
 
@@ -143,8 +144,9 @@ function GameTimer() {
 
 export function LiveWorkspace() {
   const {
-    rounds, agents, families,
+    rounds, agents, families, gridSize, currentRound,
     streamingPhase, streamingTokens,
+    showOptimalMoves, setShowOptimalMoves,
   } = useGameState();
   const [selectedFamily, setSelectedFamily] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
@@ -209,6 +211,25 @@ export function LiveWorkspace() {
   const provider = familyConfig?.provider ?? "";
   const familyAgentIds = new Set(familyAgents.map((a) => a.id));
   const activeAgent = selectedAgent ? (agents[selectedAgent] ?? null) : null;
+
+  // Optimal moves: compute agent list from current round and split families
+  const optAgentList = useMemo(() => {
+    const roundData = currentRound > 0 ? rounds[currentRound - 1] : null;
+    const source =
+      roundData?.grid?.agents && roundData.grid.agents.length > 0
+        ? roundData.grid.agents
+        : Object.values(agents);
+    return source as import("@/lib/types").AgentState[];
+  }, [currentRound, rounds, agents]);
+
+  const leftFamilies = useMemo(
+    () => families.slice(0, Math.ceil(families.length / 2)).map((f) => f.name),
+    [families],
+  );
+  const rightFamilies = useMemo(
+    () => families.slice(Math.ceil(families.length / 2)).map((f) => f.name),
+    [families],
+  );
 
   // Build flat stream for right panel (reasoning + family + dms)
   const stream = useMemo(() => {
@@ -356,9 +377,40 @@ export function LiveWorkspace() {
           <span className="text-[10px] text-black/30 font-medium">
             {rounds.length > 0 ? `Round ${rounds[rounds.length - 1]?.round ?? 0}` : "Waiting..."}
           </span>
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showOptimalMoves}
+              onChange={(e) => setShowOptimalMoves(e.target.checked)}
+              className="w-3 h-3 cursor-pointer"
+            />
+            <span className={`text-[10px] ${showOptimalMoves ? "text-black/50 font-medium" : "text-black/30"}`}>
+              Optimal moves
+            </span>
+          </label>
           <span className="text-[10px] text-black/30 font-mono"><GameTimer /></span>
         </div>
-        <div className="flex-1 min-h-0"><GameGrid /></div>
+        <div className="flex-1 min-h-0 flex">
+          {showOptimalMoves && (
+            <OptimalMovesSidePanel
+              familyNames={leftFamilies}
+              allAgents={optAgentList}
+              families={families}
+              gridSize={gridSize}
+              side="left"
+            />
+          )}
+          <div className="flex-1 min-w-0"><GameGrid /></div>
+          {showOptimalMoves && (
+            <OptimalMovesSidePanel
+              familyNames={rightFamilies}
+              allAgents={optAgentList}
+              families={families}
+              gridSize={gridSize}
+              side="right"
+            />
+          )}
+        </div>
         <div className="h-[80px] shrink-0 border-t border-black/5"><KillTimeline /></div>
       </div>
 

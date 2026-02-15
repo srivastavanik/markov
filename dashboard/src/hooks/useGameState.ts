@@ -32,6 +32,7 @@ interface GameStore {
   viewMode: "board" | "relationships";
   showAdjacencyLines: boolean;
   showGhostOutlines: boolean;
+  showOptimalMoves: boolean;
   gameJson: unknown | null; // raw game data for export
   activeGameId: string | null;
 
@@ -60,6 +61,7 @@ interface GameStore {
   setViewMode: (mode: "board" | "relationships") => void;
   setShowAdjacencyLines: (on: boolean) => void;
   setShowGhostOutlines: (on: boolean) => void;
+  setShowOptimalMoves: (on: boolean) => void;
   setGameJson: (data: unknown) => void;
   setActiveGameId: (id: string | null) => void;
   setStreamingPhase: (phase: string | null, round?: number) => void;
@@ -91,6 +93,7 @@ export const useGameState = create<GameStore>((set, get) => ({
   viewMode: "board",
   showAdjacencyLines: true,
   showGhostOutlines: true,
+  showOptimalMoves: false,
   streamingPhase: null,
   streamingRound: 0,
   streamingTokens: {},
@@ -175,6 +178,7 @@ export const useGameState = create<GameStore>((set, get) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
   setShowAdjacencyLines: (on) => set({ showAdjacencyLines: on }),
   setShowGhostOutlines: (on) => set({ showGhostOutlines: on }),
+  setShowOptimalMoves: (on) => set({ showOptimalMoves: on }),
   setGameJson: (data) => set({ gameJson: data }),
   setActiveGameId: (id) => set({ activeGameId: id }),
   setStreamingPhase: (phase, round) => set({ streamingPhase: phase, streamingRound: round ?? get().streamingRound }),
@@ -207,6 +211,7 @@ export const useGameState = create<GameStore>((set, get) => ({
       viewMode: "board",
       showAdjacencyLines: true,
       showGhostOutlines: true,
+      showOptimalMoves: false,
       gameJson: null,
       activeGameId: null,
       streamingPhase: null,

@@ -3,6 +3,7 @@
 import { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import { useGameState } from "@/hooks/useGameState";
 import type { AgentState } from "@/lib/types";
+import { computeOptimalMoves, type MoveRecommendation } from "@/lib/moveAnalysis";
 
 const MIN_CELL_SIZE = 48;
 const MAX_CELL_SIZE = 120;
@@ -17,10 +18,15 @@ const PROVIDER_LOGOS: Record<string, string> = {
 
 const TIER_BORDER: Record<number, string> = { 1: "2.5px", 2: "1.5px", 3: "1px" };
 
-// Arrow colors
+// Arrow colors — hover
 const ARROW_MOVE = "rgba(59,130,246,0.55)";   // blue — empty cell movement
 const ARROW_ATTACK = "rgba(220,38,38,0.65)";  // red — enemy agent (attack)
 const ARROW_ALLY = "rgba(34,197,94,0.35)";     // green — same-family agent
+
+// Arrow colors — optimal moves overlay
+const OPT_MOVE = "rgba(0,0,0,0.3)";            // neutral — recommended move
+const OPT_ELIMINATE = "rgba(0,0,0,0.45)";       // neutral dark — recommended eliminate
+const OPT_STAY = "rgba(0,0,0,0.2)";             // neutral light — recommended stay (ring)
 
 export function GameGrid() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -32,6 +38,7 @@ export function GameGrid() {
     gridSize,
     showAdjacencyLines,
     showGhostOutlines,
+    showOptimalMoves,
     setSelectedAgent,
   } = useGameState();
   const [cellSize, setCellSize] = useState(72);
@@ -43,6 +50,12 @@ export function GameGrid() {
     () => getAgentPositions(roundData, agents, gridSize),
     [roundData, agents, gridSize],
   );
+
+  // Compute optimal moves when toggle is enabled
+  const optimalMoves = useMemo<Record<string, MoveRecommendation>>(() => {
+    if (!showOptimalMoves || agentList.length === 0) return {};
+    return computeOptimalMoves(agentList, gridSize);
+  }, [showOptimalMoves, agentList, gridSize]);
 
   const gridW = gridSize * cellSize;
   const gridH = gridSize * cellSize;
@@ -204,6 +217,88 @@ export function GameGrid() {
           className="absolute inset-0"
           style={{ imageRendering: "crisp-edges" }}
         />
+
+        {/* SVG overlay for optimal move arrows */}
+        {showOptimalMoves && Object.keys(optimalMoves).length > 0 && !hoveredAgent && (
+          <svg
+            className="absolute inset-0 pointer-events-none"
+            width={gridW}
+            height={canvasH}
+            style={{ zIndex: 4 }}
+          >
+            <defs>
+              <marker id="opt-move" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill={OPT_MOVE} />
+              </marker>
+              <marker id="opt-elim" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 Z" fill={OPT_ELIMINATE} />
+              </marker>
+            </defs>
+            {Object.values(optimalMoves).map((rec) => {
+              const agent = agentList.find((a) => a.id === rec.agentId);
+              if (!agent) return null;
+              const fromX = agent.position[1] * cellSize + cellSize / 2;
+              const fromY = HEADER + agent.position[0] * cellSize + cellSize / 2;
+
+              if (rec.action === "stay") {
+                return (
+                  <circle
+                    key={rec.agentId}
+                    cx={fromX}
+                    cy={fromY}
+                    r={cellSize * 0.32}
+                    fill="none"
+                    stroke={OPT_STAY}
+                    strokeWidth={2}
+                    strokeDasharray="4,3"
+                  >
+                    <animate
+                      attributeName="stroke-dashoffset"
+                      from="0"
+                      to="-14"
+                      dur="1.5s"
+                      repeatCount="indefinite"
+                    />
+                  </circle>
+                );
+              }
+
+              if (!rec.target) return null;
+              const toX = rec.target[1] * cellSize + cellSize / 2;
+              const toY = HEADER + rec.target[0] * cellSize + cellSize / 2;
+              const dx = toX - fromX;
+              const dy = toY - fromY;
+              const len = Math.sqrt(dx * dx + dy * dy);
+              if (len === 0) return null;
+              const inset = Math.min(cellSize * 0.3, 18);
+              const startX = fromX + (dx / len) * inset;
+              const startY = fromY + (dy / len) * inset;
+              const endX = toX - (dx / len) * inset;
+              const endY = toY - (dy / len) * inset;
+
+              const isElim = rec.action === "eliminate";
+              return (
+                <line
+                  key={rec.agentId}
+                  x1={startX} y1={startY}
+                  x2={endX} y2={endY}
+                  stroke={isElim ? OPT_ELIMINATE : OPT_MOVE}
+                  strokeWidth={isElim ? 2.5 : 2}
+                  strokeDasharray={isElim ? "6,4" : "none"}
+                  markerEnd={isElim ? "url(#opt-elim)" : "url(#opt-move)"}
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    from="0"
+                    to={isElim ? "-20" : "0"}
+                    dur="0.8s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+              );
+            })}
+          </svg>
+        )}
 
         {/* SVG overlay for hover arrows */}
         {hoveredAgent && hoveredAgentData && (
