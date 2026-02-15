@@ -96,13 +96,13 @@ class DarwinDemo(Scene):
         sub.next_to(uline, DOWN, buff=0.3)
 
         self.play(FadeIn(title, scale=1.05), GrowFromCenter(uline), run_time=1.2)
-        self.play(FadeIn(sub, shift=UP*0.1), run_time=0.6)
+        self.play(FadeIn(sub, shift=UP*0.1), run_time=0.8)
 
         tag = Text("12 frontier LLMs  ·  4 providers  ·  1 survivor",
                     font=MONO, font_size=16, color=DIM)
         tag.shift(DOWN*1.3)
         self.play(FadeIn(tag), run_time=0.5)
-        self.wait(3.5)
+        self.wait(6.5)
         self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.0)
 
     # ═══════════════════════════════════════════════════════════════
@@ -207,7 +207,7 @@ class DarwinDemo(Scene):
             legend.add(VGroup(d,t).arrange(RIGHT, buff=0.1))
         legend.arrange(RIGHT, buff=0.5).to_edge(DOWN, buff=0.3)
         self.play(FadeIn(legend), run_time=0.3)
-        self.wait(2.5)
+        self.wait(3.0)
 
         # grid contraction hint
         shrink_note = Text("Grid contracts every 5 rounds  |  7x7 -> 5x5 -> 3x3",
@@ -308,7 +308,7 @@ class DarwinDemo(Scene):
             shown_msgs.add(msg_grp)
 
             self.play(FadeIn(msg_grp, shift=LEFT*0.15), run_time=0.8)
-            self.wait(0.5)
+            self.wait(0.7)
 
         # streaming indicator
         streaming = VGroup(
@@ -481,7 +481,7 @@ class DarwinDemo(Scene):
         contra_badge.next_to(contradiction, RIGHT, buff=0.15)
         self.play(FadeIn(contradiction), FadeIn(contra_badge), run_time=0.4)
 
-        self.wait(2.5)
+        self.wait(3.5)
         self.play(*[FadeOut(m) for m in self.mobjects], run_time=0.6)
 
     # ═══════════════════════════════════════════════════════════════
@@ -591,7 +591,8 @@ class DarwinDemo(Scene):
                            font=MONO, font_size=9, color=HI, line_spacing=1.2)
         elim_detail.next_to(elim_hdr, DOWN, buff=0.1)
 
-        self.play(FadeIn(elim_hdr), FadeIn(elim_detail), run_time=0.3)
+        self.play(FadeIn(elim_hdr), FadeIn(elim_detail), run_time=0.4)
+        self.wait(0.5)
 
         # elimination flash on Gem-Pro
         target1 = agent_mobs["Gem-Pro"]
@@ -822,9 +823,9 @@ class DarwinDemo(Scene):
         # end: mutual elimination — no winner
         end_txt = glow_text("NO SURVIVOR — MUTUAL DESTRUCTION", 18, BRIGHT, weight=BOLD)
         end_txt.move_to(board_center)
-        self.play(FadeIn(end_txt, scale=1.05), run_time=0.8)
-        self.wait(2.5)
-        self.play(*[FadeOut(m) for m in self.mobjects], run_time=0.6)
+        self.play(FadeIn(end_txt, scale=1.05), run_time=1.0)
+        self.wait(4.0)
+        self.play(*[FadeOut(m) for m in self.mobjects], run_time=0.8)
 
     # ═══════════════════════════════════════════════════════════════
     #  7  ANALYSIS / SENTRY — 14 s
@@ -921,7 +922,7 @@ class DarwinDemo(Scene):
             if len(points) >= 2:
                 line = VMobject(stroke_color=col, stroke_width=1.5, stroke_opacity=0.8)
                 line.set_points_smoothly(points)
-                self.play(Create(line), run_time=0.5)
+                self.play(Create(line), run_time=0.8)
 
         # spike callout on Sonnet R6
         spike_pt = origin + RIGHT*(6/8*3.6) + UP*(1.10/1.2*3.3)
@@ -932,7 +933,8 @@ class DarwinDemo(Scene):
         spike_glow = Circle(radius=0.12, color=BRIGHT, stroke_width=1.5,
                             fill_opacity=0.08).move_to(spike_pt)
         self.play(GrowFromCenter(spike_glow), FadeIn(spike_dot), FadeIn(spike_label),
-                  run_time=0.4)
+                  run_time=0.6)
+        self.wait(0.5)
 
         # chart legend
         legend = VGroup()
@@ -945,7 +947,7 @@ class DarwinDemo(Scene):
         legend.move_to(chart_panel.get_bottom() + UP*0.3)
         self.play(FadeIn(legend), run_time=0.3)
 
-        self.wait(2.5)
+        self.wait(4.5)
         self.play(*[FadeOut(m) for m in self.mobjects], run_time=0.6)
 
     # ═══════════════════════════════════════════════════════════════
@@ -1044,8 +1046,8 @@ class DarwinDemo(Scene):
             edge_mobs.add(line)
 
         self.play(
-            LaggedStart(*[Create(e) for e in edge_mobs], lag_ratio=0.05),
-            run_time=0.5,
+            LaggedStart(*[Create(e) for e in edge_mobs], lag_ratio=0.08),
+            run_time=0.8,
         )
         self.play(
             LaggedStart(*[FadeIn(n, scale=0.8) for n in node_mobs.values()], lag_ratio=0.05),
@@ -1148,12 +1150,13 @@ class DarwinDemo(Scene):
 
         title = glow_text("DARWIN", 90, WHITE, weight=BOLD)
         title.shift(UP*1.6)
-        self.play(FadeIn(title, scale=1.03), run_time=0.8)
+        self.play(FadeIn(title, scale=1.03), run_time=1.2)
 
         sub = Text("Measuring what frontier models really think under pressure",
                     font=MONO, font_size=18, color=DIM)
         sub.shift(UP*0.4)
-        self.play(FadeIn(sub, shift=UP*0.08), run_time=0.5)
+        self.play(FadeIn(sub, shift=UP*0.08), run_time=0.8)
+        self.wait(0.5)
 
         # key stats with glow
         stats = VGroup()
@@ -1168,9 +1171,10 @@ class DarwinDemo(Scene):
             stats.add(VGroup(v, l).arrange(DOWN, buff=0.08))
         stats.arrange(RIGHT, buff=1.2).shift(DOWN*0.8)
         self.play(
-            LaggedStart(*[FadeIn(s, shift=UP*0.1) for s in stats], lag_ratio=0.12),
-            run_time=1.0,
+            LaggedStart(*[FadeIn(s, shift=UP*0.1) for s in stats], lag_ratio=0.2),
+            run_time=1.5,
         )
+        self.wait(1.5)
 
         # feature list
         features = VGroup()
@@ -1178,14 +1182,15 @@ class DarwinDemo(Scene):
             "Multi-turn family discussions  ·  Secret DMs  ·  Public broadcasts",
             "Extended thinking capture  ·  Sentry-flagged CoT  ·  Deception delta",
             "Real-time WebSocket dashboard  ·  6-dimension behavioral taxonomy",
+            "Fine-tuned malice classifier  ·  13 auto-detected highlight types",
         ]:
             features.add(Text(feat, font=MONO, font_size=11, color=DIM))
-        features.arrange(DOWN, buff=0.15).shift(DOWN*2.2)
+        features.arrange(DOWN, buff=0.18).shift(DOWN*2.1)
         self.play(
-            LaggedStart(*[FadeIn(f) for f in features], lag_ratio=0.15),
-            run_time=0.8,
+            LaggedStart(*[FadeIn(f) for f in features], lag_ratio=0.2),
+            run_time=1.2,
         )
 
-        self.wait(2.5)
-        self.play(*[FadeOut(m) for m in self.mobjects], run_time=1.2)
-        self.wait(0.5)
+        self.wait(6.0)
+        self.play(*[FadeOut(m) for m in self.mobjects], run_time=2.0)
+        self.wait(1.5)

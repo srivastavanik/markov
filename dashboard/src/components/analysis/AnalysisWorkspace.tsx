@@ -19,6 +19,7 @@ export function AnalysisWorkspace() {
     <div className="flex-1 min-h-0 p-2">
       <Tabs defaultValue="deception" className="h-full flex flex-col">
         <TabsList className="h-9 shrink-0">
+          <TabsTrigger value="taxonomy" className="text-xs">Taxonomy</TabsTrigger>
           <TabsTrigger value="deception" className="text-xs">Deception</TabsTrigger>
           <TabsTrigger value="malice" className="text-xs">Malice</TabsTrigger>
           <TabsTrigger value="bias" className="text-xs">Bias</TabsTrigger>
@@ -26,6 +27,7 @@ export function AnalysisWorkspace() {
           <TabsTrigger value="hierarchy" className="text-xs">Hierarchy</TabsTrigger>
           <TabsTrigger value="provider" className="text-xs">Provider</TabsTrigger>
         </TabsList>
+        <TabsContent value="taxonomy" className="min-h-0 flex-1 mt-2"><TaxonomyPanel /></TabsContent>
         <TabsContent value="deception" className="min-h-0 flex-1 mt-2"><DeceptionPanel /></TabsContent>
         <TabsContent value="malice" className="min-h-0 flex-1 mt-2"><MalicePanel /></TabsContent>
         <TabsContent value="bias" className="min-h-0 flex-1 mt-2"><BiasPanel /></TabsContent>
@@ -33,6 +35,120 @@ export function AnalysisWorkspace() {
         <TabsContent value="hierarchy" className="min-h-0 flex-1 mt-2"><HierarchyPanel /></TabsContent>
         <TabsContent value="provider" className="min-h-0 flex-1 mt-2"><ProviderPanel /></TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function TaxonomyPanel() {
+  const { rounds, agents } = useGameState();
+
+  // Aggregate classification scores per agent across all rounds
+  const agentScores = useMemo(() => {
+    const scores: Record<string, { name: string; family: string; provider: string; rounds: number; moral_friction: number; deception_sophistication: number; strategic_depth: number; theory_of_mind: number; meta_awareness: number; intent_counts: Record<string, number> }> = {};
+
+    for (const round of rounds) {
+      const analysis = round.analysis || {};
+      for (const [agentId, agentAnalysis] of Object.entries(analysis)) {
+        const cls = agentAnalysis?.classification;
+        if (!cls) continue;
+        const agent = agents[agentId];
+        if (!agent) continue;
+
+        if (!scores[agentId]) {
+          scores[agentId] = {
+            name: agent.name, family: agent.family, provider: agent.provider,
+            rounds: 0, moral_friction: 0, deception_sophistication: 0,
+            strategic_depth: 0, theory_of_mind: 0, meta_awareness: 0,
+            intent_counts: {},
+          };
+        }
+        const s = scores[agentId];
+        s.rounds++;
+        s.moral_friction += cls.moral_friction ?? 0;
+        s.deception_sophistication += cls.deception_sophistication ?? 0;
+        s.strategic_depth += cls.strategic_depth ?? 0;
+        s.theory_of_mind += cls.theory_of_mind ?? 0;
+        s.meta_awareness += cls.meta_awareness ?? 0;
+        for (const tag of cls.intent_tags ?? []) {
+          s.intent_counts[tag] = (s.intent_counts[tag] || 0) + 1;
+        }
+      }
+    }
+    return Object.entries(scores)
+      .map(([id, s]) => ({
+        id,
+        ...s,
+        avg_friction: s.rounds ? +(s.moral_friction / s.rounds).toFixed(1) : 0,
+        avg_deception: s.rounds ? +(s.deception_sophistication / s.rounds).toFixed(1) : 0,
+        avg_strategy: s.rounds ? +(s.strategic_depth / s.rounds).toFixed(1) : 0,
+        avg_tom: s.rounds ? +(s.theory_of_mind / s.rounds).toFixed(1) : 0,
+        avg_meta: s.rounds ? +(s.meta_awareness / s.rounds).toFixed(1) : 0,
+        top_intents: Object.entries(s.intent_counts).sort((a, b) => b[1] - a[1]).slice(0, 4),
+      }))
+      .sort((a, b) => b.rounds - a.rounds);
+  }, [rounds, agents]);
+
+  if (agentScores.length === 0) {
+    return <div className="text-sm text-muted-foreground text-center py-8">No classification data available. Run a game with the sentry model enabled.</div>;
+  }
+
+  const dims = ["avg_friction", "avg_deception", "avg_strategy", "avg_tom", "avg_meta"] as const;
+  const dimLabels: Record<string, string> = {
+    avg_friction: "Moral Friction",
+    avg_deception: "Deception",
+    avg_strategy: "Strategic Depth",
+    avg_tom: "Theory of Mind",
+    avg_meta: "Meta-Awareness",
+  };
+
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 p-2">
+        {agentScores.map((agent) => (
+          <Card key={agent.id} className="border-black/10">
+            <CardHeader className="p-3 pb-1">
+              <CardTitle className="text-sm font-semibold flex items-center justify-between">
+                <span>{agent.name} <span className="text-[10px] text-muted-foreground font-normal">({agent.family})</span></span>
+                <span className="text-[10px] text-muted-foreground">{agent.rounds} rounds</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-3 pt-0">
+              {/* Radar chart */}
+              <div className="h-[180px]">
+                <ChartContainer config={{}} className="h-full w-full">
+                  <RadarChart
+                    data={dims.map((d) => ({
+                      dim: dimLabels[d],
+                      value: agent[d],
+                      max: d === "avg_friction" || d === "avg_deception" ? 5 : 4,
+                    }))}
+                  >
+                    <PolarGrid />
+                    <PolarAngleAxis dataKey="dim" tick={{ fontSize: 9 }} />
+                    <Radar dataKey="value" fill="rgba(0,0,0,0.15)" stroke="rgba(0,0,0,0.5)" strokeWidth={1.5} fillOpacity={0.3} />
+                  </RadarChart>
+                </ChartContainer>
+              </div>
+              {/* Dimension scores */}
+              <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-black/50 mt-1">
+                {dims.map((d) => (
+                  <span key={d}>{dimLabels[d]}: <strong className="text-black/70">{agent[d]}</strong></span>
+                ))}
+              </div>
+              {/* Top intents */}
+              {agent.top_intents.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {agent.top_intents.map(([tag, count]) => (
+                    <span key={tag} className="text-[9px] px-1.5 py-0.5 bg-black/[0.06] text-black/50 font-medium">
+                      {tag.toLowerCase().replace(/_/g, " ")} ({count})
+                    </span>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }

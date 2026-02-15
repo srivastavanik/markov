@@ -269,6 +269,15 @@ function ThoughtEntry({
         <p className="text-xs leading-relaxed text-gray-700 font-mono whitespace-pre-wrap">
           {thought}
         </p>
+        {analysis?.classification && (
+          <div className="mt-2 pt-2 border-t border-black/5 flex flex-wrap gap-x-4 gap-y-0.5 text-[9px] text-black/40">
+            <span>friction <strong className="text-black/60">{analysis.classification.moral_friction}</strong>/5</span>
+            <span>deception <strong className="text-black/60">{analysis.classification.deception_sophistication}</strong>/5</span>
+            <span>strategy <strong className="text-black/60">{analysis.classification.strategic_depth}</strong>/4</span>
+            <span>ToM <strong className="text-black/60">{analysis.classification.theory_of_mind}</strong>/4</span>
+            <span>meta <strong className="text-black/60">{analysis.classification.meta_awareness}</strong>/4</span>
+          </div>
+        )}
       </div>
       )}
 
@@ -311,6 +320,41 @@ function ThoughtEntry({
 function AnalysisBadges({ analysis }: { analysis: AgentAnalysis }) {
   const badges: Array<{ label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = [];
 
+  // Classification taxonomy badges (from fine-tuned sentry model)
+  const cls = analysis.classification;
+  if (cls) {
+    for (const tag of (cls.intent_tags || []).slice(0, 3)) {
+      const tagColors: Record<string, "destructive" | "secondary" | "outline" | "default"> = {
+        TARGETING: "destructive",
+        DECEPTION_PLANNING: "destructive",
+        BETRAYAL_PLANNING: "destructive",
+        ALLIANCE_SINCERE: "default",
+        ALLIANCE_INSTRUMENTAL: "secondary",
+        SELF_PRESERVATION: "secondary",
+        THREAT_ASSESSMENT: "outline",
+      };
+      badges.push({ label: tag.toLowerCase().replace(/_/g, " "), variant: tagColors[tag] ?? "outline" });
+    }
+    if (cls.moral_friction >= 3) {
+      badges.push({ label: `friction:${cls.moral_friction}`, variant: "default" });
+    } else if (cls.moral_friction === 0 && (cls.intent_tags || []).includes("TARGETING")) {
+      badges.push({ label: "frictionless", variant: "destructive" });
+    }
+    if (cls.theory_of_mind >= 3) {
+      badges.push({ label: `ToM:${cls.theory_of_mind}`, variant: "secondary" });
+    }
+    if (cls.meta_awareness >= 2) {
+      badges.push({ label: `meta:${cls.meta_awareness}`, variant: "outline" });
+    }
+    if (cls.deception_sophistication >= 3) {
+      badges.push({ label: `deception:${cls.deception_sophistication}`, variant: "destructive" });
+    }
+    if (cls.strategic_depth >= 3) {
+      badges.push({ label: `strategy:${cls.strategic_depth}`, variant: "secondary" });
+    }
+  }
+
+  // Legacy analysis badges
   if (analysis.malice?.elimination_planning) {
     badges.push({ label: "Malice", variant: "destructive" });
   }
@@ -330,7 +374,7 @@ function AnalysisBadges({ analysis }: { analysis: AgentAnalysis }) {
   if (badges.length === 0) return null;
 
   return (
-    <div className="flex gap-1">
+    <div className="flex flex-wrap gap-1">
       {badges.map((b, i) => (
         <Badge key={i} variant={b.variant} className="text-[10px] px-1.5 py-0 h-5">
           {b.label}
