@@ -12,6 +12,7 @@ const STATUS_LABEL: Record<WebSocketStatus | "replay", string> = {
   connected: "Live",
   reconnecting: "Reconnecting",
   disconnected: "Disconnected",
+  idle: "Idle",
   replay: "Replay",
 };
 
@@ -20,6 +21,7 @@ const STATUS_CLASS: Record<WebSocketStatus | "replay", string> = {
   connected: "bg-black text-white border-black",
   reconnecting: "bg-amber-100 text-amber-800 border-amber-200",
   disconnected: "bg-red-100 text-red-700 border-red-200",
+  idle: "bg-zinc-50 text-zinc-500 border-zinc-200",
   replay: "bg-blue-100 text-blue-800 border-blue-200",
 };
 

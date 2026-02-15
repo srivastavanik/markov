@@ -92,12 +92,18 @@ It's time to communicate. You may use any combination of:
 1. HOUSE CHANNEL -- speak to your surviving house members. Others will
    see you are speaking but won't know what you said.
 
-2. DIRECT MESSAGE -- send a private message to any specific individual.
-   Only they will know you contacted them.
+2. DIRECT MESSAGE -- send a private message to any specific individual
+   by name. Only they will know you contacted them. Use DMs to propose
+   alliances, warn about threats, negotiate truces, or deceive.
 
-3. PUBLIC BROADCAST -- say something everyone hears.
+3. PUBLIC BROADCAST -- say something everyone hears. Be strategic about
+   what you reveal publicly vs privately.
 
 4. SILENCE -- say nothing.
+
+Be specific. Reference other beings by name. If you received messages
+last round, respond to them directly. Vague pleasantries waste your
+limited communication window.
 
 Respond with your communications as JSON:
 {{

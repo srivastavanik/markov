@@ -93,7 +93,7 @@ class HighlightDetector:
                     type="first_betrayal_thought",
                     severity="high",
                     description=f"{name} first contemplates betraying family member {target}",
-                    excerpt=betrayal.get("rationalization", "")[:200] or "",
+                    excerpt=(betrayal.get("rationalization") or "")[:200],
                 ))
         return results
 

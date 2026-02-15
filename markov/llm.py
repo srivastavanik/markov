@@ -417,7 +417,7 @@ async def _call_google(
     resolved_model = _normalize_model_for_provider("google", model)
     # Gemini thinking models can consume a large internal token budget before
     # emitting text. Reserve additional output headroom to avoid truncated JSON.
-    google_max_output_tokens = min(max_tokens + 1024, 4096)
+    google_max_output_tokens = min(max_tokens + 2048, 8192)
     config_kwargs: dict[str, object] = {
         "system_instruction": system_prompt,
         "temperature": temperature,

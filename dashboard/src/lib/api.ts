@@ -74,6 +74,10 @@ export async function listGames(): Promise<ApiGameSummary[]> {
   return request<ApiGameSummary[]>("/api/games");
 }
 
+export async function getGameState(gameId: string): Promise<{ init: unknown; rounds: unknown[] }> {
+  return request<{ init: unknown; rounds: unknown[] }>(`/api/games/${gameId}/state`);
+}
+
 export async function getReplay(gameId: string): Promise<unknown> {
   return request<unknown>(`/api/games/${gameId}/replay`);
 }

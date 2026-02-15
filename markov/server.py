@@ -34,6 +34,9 @@ class GameBroadcaster:
         self.clients: set[ServerConnection] = set()
         self.client_game_ids: dict[ServerConnection, str | None] = {}
         self._server: Any = None
+        # Cache latest payloads per game for late-joining clients
+        self._last_init: dict[str | None, dict] = {}
+        self._last_rounds: dict[str | None, list[dict]] = {}
 
     async def start(self) -> None:
         self._server = await websockets.serve(
@@ -60,7 +63,19 @@ class GameBroadcaster:
 
         self.clients.add(websocket)
         self.client_game_ids[websocket] = game_id
-        logger.info("Client connected (%d total)", len(self.clients))
+        logger.info("Client connected for game=%s (%d total)", game_id, len(self.clients))
+
+        # Replay cached state so late-joiners see existing game data immediately
+        try:
+            init_payload = self._last_init.get(game_id) or self._last_init.get(None)
+            if init_payload:
+                await self._safe_send(websocket, json.dumps(init_payload, default=str))
+            cached_rounds = self._last_rounds.get(game_id) or self._last_rounds.get(None) or []
+            for round_payload in cached_rounds:
+                await self._safe_send(websocket, json.dumps(round_payload, default=str))
+        except Exception:
+            pass  # best-effort replay
+
         try:
             async for message in websocket:
                 pass  # Dashboard is read-only; ignore incoming
@@ -72,6 +87,19 @@ class GameBroadcaster:
             logger.info("Client disconnected (%d total)", len(self.clients))
 
     async def broadcast(self, data: dict, game_id: str | None = None) -> None:
+        # Cache for late-joining clients
+        msg_type = data.get("type")
+        if msg_type == "game_init":
+            self._last_init[game_id] = data
+            self._last_rounds[game_id] = []
+        elif msg_type == "round_update":
+            rounds = self._last_rounds.setdefault(game_id, [])
+            rounds.append(data)
+        elif msg_type == "game_over":
+            # Clear cache after game ends
+            self._last_init.pop(game_id, None)
+            self._last_rounds.pop(game_id, None)
+
         if not self.clients:
             return
         payload = json.dumps(data, default=str)

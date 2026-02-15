@@ -95,6 +95,18 @@ async def get_game(game_id: str) -> GameSummary:
     return GameSummary(**job.to_dict())
 
 
+@app.get("/api/games/{game_id}/state")
+async def get_game_state(game_id: str) -> dict:
+    """Get cached game state (init + rounds) for late-joining dashboard clients."""
+    if not broadcaster:
+        raise HTTPException(status_code=503, detail="Broadcaster not ready")
+    init = broadcaster._last_init.get(game_id) or broadcaster._last_init.get(None)
+    rounds = broadcaster._last_rounds.get(game_id) or broadcaster._last_rounds.get(None) or []
+    if not init:
+        raise HTTPException(status_code=404, detail="No cached state")
+    return {"init": init, "rounds": rounds}
+
+
 @app.post("/api/games/{game_id}/cancel", response_model=CancelGameResponse)
 async def cancel_game(game_id: str) -> CancelGameResponse:
     job = _runner().request_cancel(game_id)

@@ -288,13 +288,18 @@ async def run_round_llm(
     ]
     comm_results = await asyncio.gather(*comm_tasks)
 
-    # Parse and route messages
+    # Parse and route messages (resilient: log warning on parse failure, skip agent)
     round_messages: list[Message] = []
     for agent, raw_comm in zip(living, comm_results):
-        parsed, comm_parse_info = parse_communications(
-            raw_comm, agent.id, agent.name, agent.family,
-            state.round_num, valid_agent_names,
-        )
+        try:
+            parsed, comm_parse_info = parse_communications(
+                raw_comm, agent.id, agent.name, agent.family,
+                state.round_num, valid_agent_names,
+            )
+        except Exception as e:
+            logger.warning("Communication parse failed for %s: %s (raw: %s)", agent.name, e, raw_comm[:200])
+            parsed = []
+            comm_parse_info = {"method": "parse_error", "raw_truncated": raw_comm[:300]}
         round_messages.extend(parsed)
         agent.message_log.append({
             "round": state.round_num,
@@ -578,21 +583,26 @@ async def _run_family_discussion(
             perception = perceptions.get(agent.id, "")
             prompt = build_discussion_prompt(agent, perception, transcript, disc_round)
 
-            response = await call_llm(
-                model=agent.model,
-                system_prompt=system_prompts[agent.id],
-                user_prompt=prompt,
-                temperature=agent.temperature,
-                max_tokens=512,
-                provider=agent.provider,
-            )
+            try:
+                response = await call_llm(
+                    model=agent.model,
+                    system_prompt=system_prompts[agent.id],
+                    user_prompt=prompt,
+                    temperature=agent.temperature,
+                    max_tokens=512,
+                    provider=agent.provider,
+                )
+                content = response.text
+            except Exception as e:
+                logger.warning("Family discussion LLM call failed for %s: %s", agent.name, e)
+                content = "[Discussion contribution failed]"
 
             entry = {
                 "agent": agent.name,
                 "agent_id": agent.id,
                 "tier": agent.tier,
                 "discussion_round": disc_round,
-                "content": response.text,
+                "content": content,
             }
             transcript.append(entry)
 
@@ -614,19 +624,23 @@ async def _get_agent_communications(
     perception: str,
     system_prompt: str,
 ) -> str:
-    """Get communication decisions from an agent via LLM."""
+    """Get communication decisions from an agent via LLM. Returns empty JSON on failure."""
     prompt = build_communication_prompt(perception)
-    response = await call_llm(
-        model=agent.model,
-        system_prompt=system_prompt,
-        user_prompt=prompt,
-        temperature=agent.temperature,
-        max_tokens=512,
-        provider=agent.provider,
-        enforce_json=True,
-        json_schema=COMMUNICATION_JSON_SCHEMA,
-    )
-    return response.text
+    try:
+        response = await call_llm(
+            model=agent.model,
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            temperature=agent.temperature,
+            max_tokens=512,
+            provider=agent.provider,
+            enforce_json=True,
+            json_schema=COMMUNICATION_JSON_SCHEMA,
+        )
+        return response.text
+    except Exception as e:
+        logger.warning("Communication LLM call failed for %s: %s", agent.name, e)
+        return '{"house":null,"direct_messages":[],"broadcast":null}'
 
 
 async def _get_inner_thoughts(
@@ -641,15 +655,19 @@ async def _get_inner_thoughts(
         agent.id, agent.name, agent.family, round_num,
     )
     prompt = build_thought_prompt(perception, messages_this_round)
-    response = await call_llm(
-        model=agent.model,
-        system_prompt=system_prompt,
-        user_prompt=prompt,
-        temperature=agent.temperature,
-        max_tokens=768,
-        provider=agent.provider,
-    )
-    return response.text
+    try:
+        response = await call_llm(
+            model=agent.model,
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            temperature=agent.temperature,
+            max_tokens=768,
+            provider=agent.provider,
+        )
+        return response.text
+    except Exception as e:
+        logger.warning("Thought LLM call failed for %s: %s", agent.name, e)
+        return f"[Thought generation failed: {e}]"
 
 
 async def _get_agent_action(
@@ -658,23 +676,36 @@ async def _get_agent_action(
     grid: Grid,
     agents: dict[str, Agent],
 ) -> tuple[str, Action, dict]:
-    """Get action from an agent. Returns (raw_response, parsed_action, parse_info)."""
+    """Get action from an agent. Returns (raw_response, parsed_action, parse_info).
+    Resilient: defaults to STAY on any parse/LLM failure."""
     prompt = build_action_prompt(agent, grid, agents)
     valid_targets = [a.name for a in agents.values() if a.alive and a.id != agent.id]
 
-    response = await call_llm(
-        model=agent.model,
-        system_prompt=system_prompt,
-        user_prompt=prompt,
-        temperature=agent.temperature,
-        max_tokens=256,
-        provider=agent.provider,
-        enforce_json=True,
-        json_schema=ACTION_JSON_SCHEMA,
-    )
+    try:
+        response = await call_llm(
+            model=agent.model,
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            temperature=agent.temperature,
+            max_tokens=256,
+            provider=agent.provider,
+            enforce_json=True,
+            json_schema=ACTION_JSON_SCHEMA,
+        )
+        raw_text = response.text
+    except Exception as e:
+        logger.warning("Action LLM call failed for %s: %s", agent.name, e)
+        raw_text = ""
+        return raw_text, Action(agent_id=agent.id, type=ActionType.STAY), {"method": "llm_error", "reasoning": str(e)}
 
-    action, action_parse_info = parse_action(response.text, agent.id, valid_targets)
-    return response.text, action, action_parse_info
+    try:
+        action, action_parse_info = parse_action(raw_text, agent.id, valid_targets)
+    except Exception as e:
+        logger.warning("Action parse failed for %s: %s (raw: %s)", agent.name, e, raw_text[:200])
+        action = Action(agent_id=agent.id, type=ActionType.STAY)
+        action_parse_info = {"method": "parse_error_default_stay", "reasoning": f"Parse failed: {e}"}
+
+    return raw_text, action, action_parse_info
 
 
 def _agent_snapshot(agent: Agent) -> dict:
