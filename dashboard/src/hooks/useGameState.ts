@@ -26,7 +26,7 @@ interface GameStore {
   selectedAgent: string | null; // agent id for detail view
   selectedFamily: string | null;
   focusedAgentIds: string[];
-  channelFilter: "reasoning" | "family" | "dm";
+  channelFilter: "reasoning" | "dm";
   highlightsOnly: boolean;
   searchQuery: string;
   viewMode: "board" | "relationships";
@@ -54,7 +54,7 @@ interface GameStore {
   setSelectedFamily: (family: string | null) => void;
   setFocusedAgentIds: (ids: string[]) => void;
   toggleFocusedAgentId: (id: string) => void;
-  setChannelFilter: (filter: "reasoning" | "family" | "dm") => void;
+  setChannelFilter: (filter: "reasoning" | "dm") => void;
   setHighlightsOnly: (on: boolean) => void;
   setSearchQuery: (q: string) => void;
   setViewMode: (mode: "board" | "relationships") => void;
@@ -65,6 +65,7 @@ interface GameStore {
   setStreamingPhase: (phase: string | null, round?: number) => void;
   appendToken: (agentId: string, delta: string) => void;
   clearStreaming: () => void;
+  setGridSize: (size: number) => void;
   reset: () => void;
 }
 
@@ -141,6 +142,7 @@ export const useGameState = create<GameStore>((set, get) => ({
       rounds: [...s.rounds, data],
       currentRound: s.rounds.length + 1,
       agents: updatedAgents,
+      gridSize: data.grid?.size ?? s.gridSize,
       gameOver: data.game_over,
       winner: data.winner,
     }));
@@ -183,6 +185,7 @@ export const useGameState = create<GameStore>((set, get) => ({
     },
   })),
   clearStreaming: () => set({ streamingPhase: null, streamingTokens: {}, streamingRound: 0 }),
+  setGridSize: (size) => set({ gridSize: size }),
   reset: () =>
     set({
       rounds: [],

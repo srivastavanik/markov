@@ -178,6 +178,19 @@ class GameBroadcaster:
             "phase": phase,
         }, game_id=game_id)
 
+    async def broadcast_grid_shrink(
+        self,
+        game_id: str | None,
+        round_num: int,
+        new_size: int,
+    ) -> None:
+        await self.broadcast({
+            "type": "grid_shrink",
+            "game_id": game_id,
+            "round": round_num,
+            "new_size": new_size,
+        }, game_id=game_id)
+
     # ------------------------------------------------------------------
     # Game event broadcasting
     # ------------------------------------------------------------------

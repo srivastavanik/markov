@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { Fragment, useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useGameState } from "@/hooks/useGameState";
@@ -137,8 +137,8 @@ function BiasPanel() {
           <div />
           {matrix.famNames.map((col) => <div key={col} className="text-xs font-medium">{col}</div>)}
           {matrix.famNames.map((row) => (
-            <>
-              <div key={`${row}-label`} className="text-xs font-medium">{row}</div>
+            <Fragment key={row}>
+              <div className="text-xs font-medium">{row}</div>
               {matrix.famNames.map((col) => {
                 const value = matrix.avg[row][col];
                 const hue = value >= 0 ? 120 : 0;
@@ -153,7 +153,7 @@ function BiasPanel() {
                   </div>
                 );
               })}
-            </>
+            </Fragment>
           ))}
         </div>
       </CardContent>

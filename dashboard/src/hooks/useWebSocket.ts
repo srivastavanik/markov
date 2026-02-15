@@ -114,6 +114,8 @@ export function useWebSocket({
             setStreamingPhase(data.phase, data.round);
           } else if (data.type === "token_delta") {
             appendToken(data.agent_id, data.delta);
+          } else if (data.type === "grid_shrink") {
+            useGameState.getState().setGridSize(data.new_size);
           } else if (data.type === "phase_complete") {
             // Phase done; streaming tokens stay visible until round_update clears them
           }

@@ -72,7 +72,7 @@ export function ThoughtStream() {
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-1">
-            {(["reasoning", "family", "dm"] as const).map((f) => (
+            {(["reasoning", "dm"] as const).map((f) => (
               <button
                 key={f}
                 className={`text-[10px] px-2 py-1 border ${channelFilter === f ? "bg-black text-white border-black" : "bg-white border-black/15"}`}
@@ -143,7 +143,7 @@ function RoundSection({
   agents: Record<string, import("@/lib/types").AgentState>;
   selectedAgent: string | null;
   visibleAgentIds: string[];
-  channelFilter: "reasoning" | "family" | "dm";
+  channelFilter: "reasoning" | "dm";
   highlightsOnly: boolean;
   searchQuery: string;
   collapsed: boolean;
@@ -236,7 +236,7 @@ function ThoughtEntry({
   analysis?: AgentAnalysis;
   messagesSent: MessageData[];
   selected: boolean;
-  channelFilter: "reasoning" | "family" | "dm";
+  channelFilter: "reasoning" | "dm";
   onClickAgent?: () => void;
 }) {
   const filteredMessages = messagesSent.filter((m) => channelFilter === m.channel);

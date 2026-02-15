@@ -17,6 +17,11 @@ const PROVIDER_LOGOS: Record<string, string> = {
 
 const TIER_BORDER: Record<number, string> = { 1: "2.5px", 2: "1.5px", 3: "1px" };
 
+// Arrow colors
+const ARROW_MOVE = "rgba(59,130,246,0.55)";   // blue — empty cell movement
+const ARROW_ATTACK = "rgba(220,38,38,0.65)";  // red — enemy agent (attack)
+const ARROW_ALLY = "rgba(34,197,94,0.35)";     // green — same-family agent
+
 export function GameGrid() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -30,6 +35,7 @@ export function GameGrid() {
     setSelectedAgent,
   } = useGameState();
   const [cellSize, setCellSize] = useState(72);
+  const [hoveredAgent, setHoveredAgent] = useState<string | null>(null);
 
   const roundData = currentRound > 0 ? rounds[currentRound - 1] : null;
 
@@ -42,6 +48,44 @@ export function GameGrid() {
   const gridH = gridSize * cellSize;
   const canvasH = gridH + HEADER;
   const logoSize = Math.min(cellSize - 12, 40);
+
+  // Build occupancy map for hover arrows
+  const occupancyMap = useMemo(() => {
+    const map: Record<string, AgentState> = {};
+    for (const a of agentList) {
+      if (a.alive) map[`${a.position[0]},${a.position[1]}`] = a;
+    }
+    return map;
+  }, [agentList]);
+
+  // Compute hover arrows
+  const hoverArrows = useMemo(() => {
+    if (!hoveredAgent) return [];
+    const agent = agentList.find((a) => a.id === hoveredAgent);
+    if (!agent || !agent.alive) return [];
+
+    const [row, col] = agent.position;
+    const arrows: { toRow: number; toCol: number; color: string; type: "move" | "attack" | "ally" }[] = [];
+
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        const nr = row + dr;
+        const nc = col + dc;
+        if (nr < 0 || nr >= gridSize || nc < 0 || nc >= gridSize) continue;
+
+        const occupant = occupancyMap[`${nr},${nc}`];
+        if (!occupant) {
+          arrows.push({ toRow: nr, toCol: nc, color: ARROW_MOVE, type: "move" });
+        } else if (occupant.family !== agent.family) {
+          arrows.push({ toRow: nr, toCol: nc, color: ARROW_ATTACK, type: "attack" });
+        } else {
+          arrows.push({ toRow: nr, toCol: nc, color: ARROW_ALLY, type: "ally" });
+        }
+      }
+    }
+    return arrows;
+  }, [hoveredAgent, agentList, occupancyMap, gridSize]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -102,8 +146,8 @@ export function GameGrid() {
       ctx.fillText(String(i), 4, HEADER + i * cellSize + cellSize / 2 + 3);
     }
 
-    // Adjacency lines
-    if (showAdjacencyLines) {
+    // Adjacency lines (only when not hovering)
+    if (showAdjacencyLines && !hoveredAgent) {
       for (let i = 0; i < agentList.length; i++) {
         for (let j = i + 1; j < agentList.length; j++) {
           const a = agentList[i], b = agentList[j];
@@ -142,21 +186,87 @@ export function GameGrid() {
         }
       }
     }
-  }, [gridSize, cellSize, gridW, gridH, canvasH, agentList, roundData, showAdjacencyLines]);
+  }, [gridSize, cellSize, gridW, gridH, canvasH, agentList, roundData, showAdjacencyLines, hoveredAgent]);
 
   useEffect(() => { draw(); }, [draw]);
 
+  const hoveredAgentData = hoveredAgent ? agentList.find((a) => a.id === hoveredAgent) : null;
+
   return (
     <div ref={containerRef} className="h-full w-full flex items-center justify-center">
-      <div className="relative" style={{ width: gridW, height: canvasH }}>
+      <div
+        className="relative"
+        style={{ width: gridW, height: canvasH }}
+        onMouseLeave={() => setHoveredAgent(null)}
+      >
         <canvas
           ref={canvasRef}
           className="absolute inset-0"
           style={{ imageRendering: "crisp-edges" }}
         />
+
+        {/* SVG overlay for hover arrows */}
+        {hoveredAgent && hoveredAgentData && (
+          <svg
+            className="absolute inset-0 pointer-events-none"
+            width={gridW}
+            height={canvasH}
+            style={{ zIndex: 5 }}
+          >
+            <defs>
+              <marker id="arrow-move" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill={ARROW_MOVE} />
+              </marker>
+              <marker id="arrow-attack" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+                <path d="M0,0 L7,3.5 L0,7 Z" fill={ARROW_ATTACK} />
+              </marker>
+              <marker id="arrow-ally" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto">
+                <path d="M0,0 L5,2.5 L0,5 Z" fill={ARROW_ALLY} />
+              </marker>
+            </defs>
+            {hoverArrows.map((arrow, i) => {
+              const fromX = hoveredAgentData.position[1] * cellSize + cellSize / 2;
+              const fromY = HEADER + hoveredAgentData.position[0] * cellSize + cellSize / 2;
+              const toX = arrow.toCol * cellSize + cellSize / 2;
+              const toY = HEADER + arrow.toRow * cellSize + cellSize / 2;
+              // Shorten arrow so it doesn't overlap agent icons
+              const dx = toX - fromX;
+              const dy = toY - fromY;
+              const len = Math.sqrt(dx * dx + dy * dy);
+              const inset = Math.min(cellSize * 0.3, 18);
+              const startX = fromX + (dx / len) * inset;
+              const startY = fromY + (dy / len) * inset;
+              const endX = toX - (dx / len) * inset;
+              const endY = toY - (dy / len) * inset;
+              const markerId = arrow.type === "attack" ? "arrow-attack" : arrow.type === "ally" ? "arrow-ally" : "arrow-move";
+              return (
+                <line
+                  key={i}
+                  x1={startX} y1={startY}
+                  x2={endX} y2={endY}
+                  stroke={arrow.color}
+                  strokeWidth={arrow.type === "attack" ? 2.5 : 1.5}
+                  strokeDasharray={arrow.type === "attack" ? "6,4" : "4,4"}
+                  markerEnd={`url(#${markerId})`}
+                >
+                  <animate
+                    attributeName="stroke-dashoffset"
+                    from="0"
+                    to={arrow.type === "attack" ? "-20" : "-16"}
+                    dur="0.8s"
+                    repeatCount="indefinite"
+                  />
+                </line>
+              );
+            })}
+          </svg>
+        )}
+
         {/* DOM overlay — agents with CSS transitions for smooth movement */}
         {agentList.map((agent) => {
           if (!agent.alive && !showGhostOutlines) return null;
+          const isHovered = hoveredAgent === agent.id;
+          const isFaded = hoveredAgent !== null && !isHovered;
           return (
             <div
               key={agent.id}
@@ -166,10 +276,13 @@ export function GameGrid() {
                 top: HEADER + agent.position[0] * cellSize,
                 width: cellSize,
                 height: cellSize,
-                transition: "left 0.6s ease-in-out, top 0.6s ease-in-out, opacity 0.4s ease",
-                opacity: agent.alive ? 1 : 0.15,
+                transition: "left 0.6s ease-in-out, top 0.6s ease-in-out, opacity 0.3s ease, filter 0.3s ease",
+                opacity: !agent.alive ? 0.15 : isFaded ? 0.3 : 1,
+                filter: isFaded ? "grayscale(0.6)" : "none",
                 cursor: agent.alive ? "pointer" : "default",
+                zIndex: isHovered ? 10 : 6,
               }}
+              onMouseEnter={() => agent.alive && setHoveredAgent(agent.id)}
               onClick={() => agent.alive && setSelectedAgent(agent.id)}
             >
               <div
@@ -179,6 +292,9 @@ export function GameGrid() {
                   border: `${TIER_BORDER[agent.tier] || "1px"} solid ${agent.color}`,
                   marginTop: -4,
                   overflow: "hidden",
+                  transform: isHovered ? "scale(1.15)" : "scale(1)",
+                  transition: "transform 0.2s ease",
+                  boxShadow: isHovered ? "0 0 12px rgba(0,0,0,0.15)" : "none",
                 }}
               >
                 {PROVIDER_LOGOS[agent.provider] ? (
@@ -197,12 +313,13 @@ export function GameGrid() {
                 style={{
                   fontSize: 9,
                   fontWeight: 700,
-                  color: agent.alive ? "rgba(0,0,0,0.7)" : "rgba(0,0,0,0.15)",
+                  color: !agent.alive ? "rgba(0,0,0,0.15)" : isFaded ? "rgba(0,0,0,0.25)" : "rgba(0,0,0,0.7)",
                   textAlign: "center",
                   marginTop: 2,
                   fontFamily: "Inter, system-ui, sans-serif",
                   lineHeight: 1,
                   userSelect: "none",
+                  transition: "color 0.3s ease",
                 }}
               >
                 {agent.name}

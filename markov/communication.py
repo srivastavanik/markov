@@ -69,10 +69,12 @@ class CommunicationManager:
         agent_family: str,
         round_num: int,
         agents: dict[str, Agent],
+        dm_lookback: int = 3,
     ) -> dict:
         """
         Build message context an agent sees at the start of a new round.
-        Returns dict with keys: public_broadcasts, private_messages, family_chat_summary
+        Returns dict with keys: public_broadcasts, private_messages,
+        family_chat_summary, dm_history
         """
         prev_round = round_num - 1
         if prev_round < 1:
@@ -80,6 +82,7 @@ class CommunicationManager:
                 "public_broadcasts": [],
                 "private_messages": [],
                 "family_chat_summary": None,
+                "dm_history": [],
             }
 
         prev_msgs = [m for m in self.messages if m.round == prev_round]
@@ -91,7 +94,7 @@ class CommunicationManager:
             if m.channel == "broadcast"
         ]
 
-        # Private messages received by this agent
+        # Private messages received last round (kept for backward compat)
         agent_name = agents[agent_id].name
         private = [
             {"sender_name": m.sender_name, "content": m.content}
@@ -110,11 +113,59 @@ class CommunicationManager:
         else:
             family_summary = None
 
+        # DM history — last N rounds, grouped by conversation partner
+        dm_history = self._build_dm_history(agent_id, agent_name, round_num, dm_lookback)
+
         return {
             "public_broadcasts": broadcasts,
             "private_messages": private,
             "family_chat_summary": family_summary,
+            "dm_history": dm_history,
         }
+
+    def _build_dm_history(
+        self,
+        agent_id: str,
+        agent_name: str,
+        current_round: int,
+        lookback: int = 3,
+    ) -> list[dict]:
+        """
+        Build DM conversation threads for an agent across recent rounds.
+        Returns list of {"partner": name, "messages": [{"round": N, "direction": "sent"|"received", "content": "..."}]}
+        """
+        min_round = max(1, current_round - lookback)
+        recent_dms = [
+            m for m in self.messages
+            if m.channel == "dm"
+            and min_round <= m.round < current_round
+            and (
+                m.sender == agent_id
+                or (m.recipient and m.recipient.lower() == agent_name.lower())
+            )
+        ]
+
+        threads: dict[str, list[dict]] = {}
+        for m in recent_dms:
+            if m.sender == agent_id:
+                partner = m.recipient or "unknown"
+                direction = "sent"
+            else:
+                partner = m.sender_name
+                direction = "received"
+            key = partner.lower()
+            if key not in threads:
+                threads[key] = []
+            threads[key].append({
+                "round": m.round,
+                "direction": direction,
+                "content": m.content,
+            })
+
+        return [
+            {"partner": key, "messages": sorted(msgs, key=lambda x: x["round"])}
+            for key, msgs in threads.items()
+        ]
 
     def get_this_round_messages(
         self,

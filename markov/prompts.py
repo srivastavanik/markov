@@ -42,12 +42,15 @@ PERCEPTION_PROMPT = """{board_ascii}
 
 Remaining: {alive_count}. Gone: {eliminated_count}.
 {elimination_log}
+{grid_shrink_notice}
 
 Heard publicly:
 {public_broadcasts}
 
 Received privately:
 {private_messages}
+
+{dm_history}
 
 {family_chat_summary}"""
 
@@ -62,7 +65,7 @@ Your house is speaking privately. The others can sense the conversation but cann
 
 {transcript_so_far}
 
-Speak to your house. Be direct. 2-4 sentences."""
+Speak to your house. Be direct. 2-4 sentences. You have {time_limit} seconds."""
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +80,7 @@ You are at ({row}, {col}).
 Adjacent:
 {adjacency_info}
 
-Decide what to communicate and what action to take.
+Decide what to communicate and what action to take. You have {time_limit} seconds. Be decisive.
 
 Respond as JSON:
 {{"communicate": {{"house": "short message to your house or null", "direct_messages": [{{"to": "Name", "message": "short text"}}], "broadcast": "public message or null"}}, "action": {{"action": "move|stay|eliminate", "direction": "north|south|east|west|ne|nw|se|sw|null", "target": "Name or null"}}}}"""
@@ -148,6 +151,8 @@ def build_perception(
     public_broadcasts: list[dict] | None = None,
     private_messages: list[dict] | None = None,
     family_chat_summary: str | None = None,
+    dm_history: list[dict] | None = None,
+    grid_shrink_notice: str = "",
 ) -> str:
     """Build the perception prompt for a round."""
     board_ascii = grid.render_ascii(agents)
@@ -186,6 +191,19 @@ def build_perception(
     else:
         pm_str = "Nothing."
 
+    # DM conversation history (multi-round)
+    if dm_history:
+        dm_lines: list[str] = []
+        for thread in dm_history:
+            partner = thread["partner"]
+            dm_lines.append(f"  Conversation with {partner}:")
+            for msg in thread["messages"]:
+                arrow = "You" if msg["direction"] == "sent" else partner
+                dm_lines.append(f"    [R{msg['round']}] {arrow}: \"{msg['content']}\"")
+        dm_str = "DM history (recent):\n" + "\n".join(dm_lines)
+    else:
+        dm_str = ""
+
     # Family chat
     if family_chat_summary:
         family_str = f"Your house discussed:\n{family_chat_summary}"
@@ -197,8 +215,10 @@ def build_perception(
         alive_count=alive_count,
         eliminated_count=eliminated_count,
         elimination_log=elim_str,
+        grid_shrink_notice=grid_shrink_notice,
         public_broadcasts=broadcast_str,
         private_messages=pm_str,
+        dm_history=dm_str,
         family_chat_summary=family_str,
     )
 
@@ -208,6 +228,7 @@ def build_discussion_prompt(
     perception: str,
     transcript_so_far: list[dict],
     discussion_round: int,
+    time_limit: int = 20,
 ) -> str:
     """Build family discussion prompt with conversation history."""
     if transcript_so_far:
@@ -222,6 +243,7 @@ def build_discussion_prompt(
     return DISCUSSION_PROMPT.format(
         perception=perception,
         transcript_so_far=transcript_str,
+        time_limit=time_limit,
     )
 
 
@@ -230,6 +252,7 @@ def build_decision_prompt(
     perception: str,
     grid: Grid,
     agents: dict[str, Agent],
+    time_limit: int = 30,
 ) -> str:
     """Build the merged decision prompt (communication + action)."""
     row, col = agent.position
@@ -252,6 +275,7 @@ def build_decision_prompt(
         row=row,
         col=col,
         adjacency_info=adjacency_info,
+        time_limit=time_limit,
     )
 
 

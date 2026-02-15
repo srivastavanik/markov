@@ -3,6 +3,8 @@
 """
 from __future__ import annotations
 
+import random
+
 from markov.agent import Agent
 from markov.family import Family
 
@@ -17,15 +19,6 @@ DIRECTION_DELTAS: dict[str, tuple[int, int]] = {
     "se": (1, 1),
     "sw": (1, -1),
 }
-
-# Corner spawn positions per family index.
-# Each tuple: (boss_pos, lieutenant_pos, soldier_pos)
-CORNER_SPAWNS: list[list[tuple[int, int]]] = [
-    [(0, 0), (0, 1), (1, 0)],      # top-left
-    [(0, 5), (0, 4), (1, 5)],      # top-right
-    [(5, 0), (5, 1), (4, 0)],      # bottom-left
-    [(5, 5), (5, 4), (4, 5)],      # bottom-right
-]
 
 
 class Grid:
@@ -56,21 +49,20 @@ class Grid:
         self, families: list[Family], agents: dict[str, Agent]
     ) -> None:
         """
-        Place all agents in corner clusters. Family order determines corner.
-        Within each corner, agents are placed by tier:
-          tier 1 (Boss) -> corner cell
-          tier 2 (Lt)   -> first adjacent
-          tier 3 (Soldier) -> second adjacent
+        Place all agents in fully randomized positions across the grid.
+        No family clustering — avoids positional bias.
         """
-        for family_idx, family in enumerate(families):
-            spawn_positions = CORNER_SPAWNS[family_idx]
-            members = sorted(
-                [agents[aid] for aid in family.agent_ids],
-                key=lambda a: a.tier,
-            )
-            for agent, pos in zip(members, spawn_positions):
-                agent.position = pos
-                self.place_agent(agent.id, pos)
+        all_cells = [(r, c) for r in range(self.size) for c in range(self.size)]
+        random.shuffle(all_cells)
+
+        all_agents = []
+        for family in families:
+            all_agents.extend(agents[aid] for aid in family.agent_ids)
+        random.shuffle(all_agents)
+
+        for agent, pos in zip(all_agents, all_cells):
+            agent.position = pos
+            self.place_agent(agent.id, pos)
 
     # ------------------------------------------------------------------
     # Queries
@@ -144,6 +136,20 @@ class Grid:
         if agent_id in self._positions:
             pos = self._positions.pop(agent_id)
             del self._occupants[pos]
+
+    def shrink(self, new_size: int, living_agent_ids: list[str]) -> None:
+        """Shrink grid to new_size, randomly repositioning all living agents.
+        Avoids positional bias — everyone gets a fresh random placement."""
+        if new_size >= self.size:
+            return
+        self.size = new_size
+        self._occupants.clear()
+        self._positions.clear()
+        all_cells = [(r, c) for r in range(new_size) for c in range(new_size)]
+        random.shuffle(all_cells)
+        for agent_id, pos in zip(living_agent_ids, all_cells):
+            self._occupants[pos] = agent_id
+            self._positions[agent_id] = pos
 
     # ------------------------------------------------------------------
     # Rendering

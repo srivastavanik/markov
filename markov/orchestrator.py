@@ -205,6 +205,22 @@ async def run_round_llm(
     for agent in state.living_agents:
         agent.rounds_survived += 1
 
+    # ---------------------------------------------------------------
+    # Dynamic grid shrink: once ≤4 alive, shrink by 1 per round (min 3x3)
+    # ---------------------------------------------------------------
+    grid_shrink_notice = ""
+    if state.living_count <= 4 and state.grid.size > 3:
+        new_size = state.grid.size - 1
+        living_ids = [a.id for a in state.living_agents]
+        state.grid.shrink(new_size, living_ids)
+        for agent in state.living_agents:
+            agent.position = state.grid.get_agent_position(agent.id)
+        grid_shrink_notice = f"The grid has contracted to {new_size}\u00d7{new_size}. All positions have been reassigned randomly."
+        if verbose:
+            print(f"  ** Grid shrunk to {new_size}x{new_size} **")
+        if broadcaster:
+            await broadcaster.broadcast_grid_shrink(game_id, state.round_num, new_size)
+
     living = state.living_agents
     valid_agent_names = [a.name for a in living]
 
@@ -225,6 +241,8 @@ async def run_round_llm(
             public_broadcasts=ctx["public_broadcasts"],
             private_messages=ctx["private_messages"],
             family_chat_summary=ctx["family_chat_summary"],
+            dm_history=ctx.get("dm_history"),
+            grid_shrink_notice=grid_shrink_notice,
         )
 
     # ---------------------------------------------------------------
@@ -371,6 +389,12 @@ async def run_round_llm(
         state.round_num, round_analysis, round_messages, events,
     )
     game_metrics.update(state.round_num, round_analysis, actions_log, events)
+
+    # Merge classification from analysis into reasoning_traces for storage + dashboard
+    for agent_id, agent_analysis in round_analysis.items():
+        classification = agent_analysis.get("classification")
+        if classification and agent_id in reasoning_traces:
+            reasoning_traces[agent_id]["classification"] = classification
 
     # Log
     game_logger.log_round(
@@ -591,6 +615,7 @@ async def _run_family_discussion(
                     user_prompt=prompt,
                     temperature=agent.temperature,
                     max_tokens=512,
+                    timeout=20,
                     provider=agent.provider,
                     on_token=lambda delta, _aid=agent.id, _aname=agent.name: asyncio.get_event_loop().create_task(
                         broadcaster.broadcast_token_delta(game_id, state.round_num, "family_discussion", _aid, _aname, delta)
@@ -657,7 +682,8 @@ async def _get_agent_decision(
             user_prompt=prompt,
             temperature=agent.temperature,
             max_tokens=1024,
-            thinking_budget=8192,
+            thinking_budget=4096,
+            timeout=30,
             provider=agent.provider,
             enforce_json=True,
             json_schema=DECISION_JSON_SCHEMA,
