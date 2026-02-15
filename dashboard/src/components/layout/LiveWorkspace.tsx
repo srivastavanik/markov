@@ -18,6 +18,11 @@ const TIER_LABELS: Record<number, string> = { 1: "Boss", 2: "Lt", 3: "Soldier" }
 
 type MsgTab = "reasoning" | "thoughts" | "family" | "dms" | "broadcasts" | "all";
 
+const TAB_TO_TYPE: Record<MsgTab, string | null> = {
+  all: null, reasoning: "reasoning", thoughts: "thought",
+  family: "family", dms: "dm", broadcasts: "broadcast",
+};
+
 // ---------------------------------------------------------------------------
 // Text utilities
 // ---------------------------------------------------------------------------
@@ -202,7 +207,7 @@ export function LiveWorkspace() {
     return entries;
   }, [rounds, agents, activeAgent, activeFamily, familyAgentIds, familyAgents, provider]);
 
-  const filtered = msgTab === "all" ? stream : stream.filter((e) => e.type === msgTab);
+  const filtered = msgTab === "all" ? stream : stream.filter((e) => e.type === TAB_TO_TYPE[msgTab]);
 
   const byRound = useMemo(() => {
     const map = new Map<number, StreamEntry[]>();
