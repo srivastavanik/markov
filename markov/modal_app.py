@@ -8,7 +8,8 @@ Setup (one-time):
         ANTHROPIC_API_KEY=sk-ant-... \
         OPENAI_API_KEY=sk-... \
         GOOGLE_API_KEY=... \
-        XAI_API_KEY=...
+        XAI_API_KEY=... \
+        SUPABASE_SERVICE_ROLE_KEY=eyJ...
 
 Smoke test:
     modal run markov/modal_app.py
@@ -39,22 +40,58 @@ image = (
 @app.function(
     image=image,
     secrets=[modal.Secret.from_name("markov-api-keys")],
-    timeout=1800,
+    timeout=3600,
     memory=1024,
 )
 async def run_game_remote(config_json: str, game_id: str) -> dict:
     """Run a single game on Modal and return serialized results."""
     import json
+    import logging
+    import os
 
     from markov.config import GameConfig
     from markov.orchestrator import run_game_llm
 
     config = GameConfig(**json.loads(config_json))
 
+    # Set up incremental Supabase persistence per round
+    round_persister = None
+    if os.getenv("SUPABASE_SERVICE_ROLE_KEY"):
+        try:
+            from markov.persistence import _get_client
+
+            client = _get_client()
+            if client:
+                # Upsert a placeholder game row so rounds can FK reference it
+                client.table("games").upsert({
+                    "id": game_id,
+                    "series_type": "in_progress",
+                    "total_rounds": 0,
+                }).execute()
+
+                def round_persister(round_num: int, round_data: dict) -> None:
+                    try:
+                        client.table("game_rounds").upsert({
+                            "id": f"{game_id}_r{round_num}",
+                            "game_id": game_id,
+                            "round_num": round_num,
+                            "thoughts_json": json.dumps(round_data.get("thoughts", {}), default=str),
+                            "messages_json": json.dumps(round_data.get("messages", []), default=str),
+                            "events_json": json.dumps(round_data.get("events", []), default=str),
+                            "actions_json": json.dumps(round_data.get("actions", {}), default=str),
+                            "reasoning_traces_json": json.dumps(round_data.get("reasoning_traces", {}), default=str),
+                            "family_discussions_json": json.dumps(round_data.get("family_discussions", []), default=str),
+                        }).execute()
+                    except Exception as e:
+                        logging.warning("Round %d persist failed: %s", round_num, e)
+        except Exception as e:
+            logging.warning("Failed to set up round persister: %s", e)
+
     state, game_logger = await run_game_llm(
         config=config,
         verbose=False,
         game_id=game_id,
+        on_round_complete=round_persister,
     )
 
     # Serialize agent info for transcript compatibility

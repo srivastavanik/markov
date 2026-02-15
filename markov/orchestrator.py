@@ -419,6 +419,7 @@ async def run_game_llm(
     broadcaster: GameBroadcaster | None = None,
     game_id: str | None = None,
     should_stop: Callable[[], bool] | None = None,
+    on_round_complete: Callable[[int, dict], None] | None = None,
 ) -> tuple[GameState, GameLogger]:
     """Run a full game with LLM calls. Returns state and logger."""
     if config is None:
@@ -463,6 +464,13 @@ async def run_game_llm(
             game_id=game_id,
             verbose=verbose,
         )
+
+        # Incremental persistence callback
+        if on_round_complete and game_logger.rounds:
+            try:
+                on_round_complete(state.round_num, game_logger.rounds[-1])
+            except Exception:
+                pass  # Never block the game
 
     # Final reflection(s)
     if cancelled:

@@ -670,7 +670,7 @@ async def _call_anthropic_with_thinking(
         "messages": [{"role": "user", "content": user_prompt}],
         "temperature": 1.0,  # Anthropic requires temperature=1 when thinking is enabled
         "max_tokens": max_tokens + thinking_budget,
-        "thinking": {"type": "adaptive", "budget_tokens": thinking_budget},
+        "thinking": {"type": "enabled", "budget_tokens": thinking_budget},
         "timeout": timeout,
     }
     if enforce_json:

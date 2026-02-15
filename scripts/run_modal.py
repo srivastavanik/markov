@@ -29,6 +29,14 @@ from pathlib import Path
 from markov.attribution import build_attribution_report
 from markov.metrics import SeriesMetrics
 from markov.modal_app import run_game_remote
+from markov.persistence import (
+    persist_game_from_result,
+    persist_series,
+    save_agent_traces_to_disk,
+    upload_agent_traces_to_s3,
+    upload_game_to_s3,
+    upload_series_index_to_s3,
+)
 from markov.series import (
     CONFIG_BUILDERS,
     build_single_provider_config,
@@ -60,6 +68,10 @@ def _save_game_result(game_dir: Path, result: dict) -> None:
 
     with open(game_dir / "transcript.md", "w") as f:
         f.write(result["transcript"])
+
+    if result.get("agents"):
+        with open(game_dir / "agents.json", "w") as f:
+            json.dump(result["agents"], f, indent=2, default=str)
 
 
 def run_series_modal(
@@ -108,6 +120,7 @@ def run_series_modal(
     series_metrics = SeriesMetrics()
     total_cost: dict[str, float] = {}
     game_num = 0
+    all_results: list[dict] = []
 
     for result in run_game_remote.map(config_jsons, game_ids):
         game_num += 1
@@ -118,6 +131,21 @@ def run_series_modal(
 
         # Save to disk
         _save_game_result(series_dir / gid, result)
+
+        # Extract per-agent traces (for agent review)
+        save_agent_traces_to_disk(result, series_dir / gid)
+
+        # Persist to Supabase (fire-and-forget)
+        persist_game_from_result(result, series_id=series_id, series_type=series_type)
+
+        # Upload to S3 (fire-and-forget)
+        upload_game_to_s3(result, series_id=series_id)
+        upload_agent_traces_to_s3(result, series_id=series_id)
+
+        # Keep lightweight copy for series index (drop heavy game_data)
+        all_results.append({
+            k: v for k, v in result.items() if k != "game_data"
+        })
 
         # Accumulate metrics
         if result.get("metrics"):
@@ -142,6 +170,10 @@ def run_series_modal(
     report = _build_series_report(series_id, series_type, num_games, aggregate)
     with open(series_dir / "report.md", "w") as f:
         f.write(report)
+
+    # Persist series aggregate + S3 index
+    persist_series(series_id, series_type, num_games, aggregate)
+    upload_series_index_to_s3(series_id, series_type, all_results, aggregate)
 
     print(f"\nSeries {series_id} complete. Results saved to {series_dir}")
     return aggregate

@@ -25,6 +25,7 @@ dev = [
 modal = [
     "modal",
     "python-dotenv",
+    "boto3",
 ]
 
 [build-system]
